@@ -1,0 +1,24 @@
+[project]
+name = "mcp-rag"
+version = "0.3.8"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "python-dotenv>=1.0.1",
+    "openai>=1.40.0",
+    "mcp>=1.12.4",
+    "requests>=2.32.3",
+    "rich>=14.1.0",
+    "tqdm>=4.67.1",
+    "flask>=3.0.0",
+]
+
+[project.scripts]
+# CLI entrypoint: `mcp-rag` will invoke mcp_rag.cli:main
+mcp-rag = "mcp_rag.cli:main"
+
+[build-system]
+requires = ["setuptools>=65.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
