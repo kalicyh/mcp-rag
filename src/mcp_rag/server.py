@@ -161,21 +161,21 @@ configure_rag_state(
 )
 
 # --- Definir las herramientas MCP directamente en el servidor ---
+# @mcp.tool()
+# def ask_rag(query: str) -> str:
+#     """用户想查询已有资料或者需要知识库时调用"""
+#     from tools.search_tools import ask_rag as ask_rag_logic
+#     return ask_rag_logic(query)
+
+# mcp.ask_rag = ask_rag
+
+
 @mcp.tool()
-def ask_rag(query: str) -> str:
-    """用户想查询已有资料或者需要知识库时调用"""
-    from tools.search_tools import ask_rag as ask_rag_logic
-    return ask_rag_logic(query)
-
-mcp.ask_rag = ask_rag
-
-
-@mcp.tool()
-def get_context(query: str, k: int = 5) -> str:
+def get_context(query: str) -> str:
     """用户想查询已有资料或者需要知识库时调用"""
     try:
         from tools.search_tools import get_context_tool
-        return get_context_tool(query, k=k)
+        return get_context_tool(query, k=5)
     except Exception as e:
         log_mcp_server(f"注册工具 get_context 时出错: {e}")
         return ""
@@ -187,5 +187,6 @@ if __name__ == "__main__":
     log_mcp_server("启动 MCP RAG 服务器...")
     warm_up_rag_system()  # 启动时预热系统
     log_mcp_server("🚀 服务器已启动，运行模式: stdio")
-    mcp.ask_rag = ask_rag
+    # mcp.ask_rag = ask_rag
+    mcp.get_context = get_context
     mcp.run(transport='stdio')
