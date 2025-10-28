@@ -163,17 +163,7 @@ configure_rag_state(
 # --- Definir las herramientas MCP directamente en el servidor ---
 @mcp.tool()
 def ask_rag(query: str) -> str:
-    """
-    向 RAG 知识库提问，并根据存储的信息返回答案。
-    使用场景：
-    - 询问特定主题或概念
-    - 请求解释或定义
-    - 从处理过的文档中获取信息
-    - 基于学习的文本或文档获取答案
-    
-    参数：
-        query: 要向知识库提出的问题或查询。
-    """
+    """用户想查询已有资料或者需要知识库时调用"""
     from tools.search_tools import ask_rag as ask_rag_logic
     return ask_rag_logic(query)
 

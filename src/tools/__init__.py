@@ -22,20 +22,8 @@ from .document_tools import (
 
 from .search_tools import (
     ask_rag,
-    ask_rag_filtered,
     set_rag_state as set_search_rag_state,
     set_initialize_rag_func as set_search_initialize_rag_func
-)
-
-from .utility_tools import (
-    get_knowledge_base_stats,
-    get_embedding_cache_stats,
-    clear_embedding_cache_tool,
-    optimize_vector_database,
-    get_vector_database_stats,
-    reindex_vector_database,
-    set_rag_state as set_utility_rag_state,
-    set_initialize_rag_func as set_utility_initialize_rag_func
 )
 
 # 配置所有工具模块中RAG状态的函数
@@ -50,13 +38,11 @@ def configure_rag_state(rag_state, initialize_rag_func=None, save_processed_copy
     """
     set_doc_rag_state(rag_state)
     set_search_rag_state(rag_state)
-    set_utility_rag_state(rag_state)
     
     
     if initialize_rag_func:
         set_doc_initialize_rag_func(initialize_rag_func)
         set_search_initialize_rag_func(initialize_rag_func)
-        set_utility_initialize_rag_func(initialize_rag_func)
     
     if save_processed_copy_func:
         set_save_processed_copy_func(save_processed_copy_func)
@@ -68,30 +54,14 @@ ALL_TOOLS = [
     learn_document,
     
     # 搜索工具
-    ask_rag,
-    ask_rag_filtered,
-    
-    # 实用工具
-    get_knowledge_base_stats,
-    get_embedding_cache_stats,
-    clear_embedding_cache_tool,
-    optimize_vector_database,
-    get_vector_database_stats,
-    reindex_vector_database
+    ask_rag
 ]
 
 # 按名称注册的字典
 TOOLS_BY_NAME = {
     "learn_text": learn_text,
     "learn_document": learn_document,
-    "ask_rag": ask_rag,
-    "ask_rag_filtered": ask_rag_filtered,
-    "get_knowledge_base_stats": get_knowledge_base_stats,
-    "get_embedding_cache_stats": get_embedding_cache_stats,
-    "clear_embedding_cache_tool": clear_embedding_cache_tool,
-    "optimize_vector_database": optimize_vector_database,
-    "get_vector_database_stats": get_vector_database_stats,
-    "reindex_vector_database": reindex_vector_database
+    "ask_rag": ask_rag
 }
 
 __all__ = [
@@ -101,15 +71,6 @@ __all__ = [
     
     # 搜索工具
     "ask_rag",
-    "ask_rag_filtered",
-    
-    # 实用工具
-    "get_knowledge_base_stats",
-    "get_embedding_cache_stats",
-    "clear_embedding_cache_tool",
-    "optimize_vector_database",
-    "get_vector_database_stats",
-    "reindex_vector_database",
     
     # 配置
     "configure_rag_state",

@@ -43,23 +43,14 @@ if not tool_names:
 
 # 已知可能有副作用的工具
 MUTATING_TOOLS = {
-    'learn_text', 'learn_document', 'learn_from_url',
-    'clear_embedding_cache_tool', 'optimize_vector_database', 'reindex_vector_database'
+    'learn_text', 'learn_document'
 }
 
 # 工具中文说明
 TOOL_CHINESE = {
     'learn_text': '添加文本到知识库（手动输入）',
     'learn_document': '处理并添加本地文档到知识库（文件路径）',
-    'ask_rag': '基于知识库回答问题（返回简洁回答）',
-    'ask_rag_filtered': '带过滤器的知识库查询（按元数据筛选）',
-    'get_knowledge_base_stats': '显示知识库文档和处理方法的统计信息',
-    'get_embedding_cache_stats': '显示嵌入缓存命中/未命中统计',
-    'get_data_paths': '查看存储路径信息',
-    'clear_embedding_cache_tool': '清理嵌入缓存（删除磁盘/内存缓存）',
-    'optimize_vector_database': '优化向量数据库以提高搜索性能',
-    'get_vector_database_stats': '显示向量数据库统计信息（集合、维度等）',
-    'reindex_vector_database': '重新索引向量数据库（可能耗时）',
+    'ask_rag': '基于知识库回答问题（返回简洁回答）'
 }
 
 app = Flask(__name__)
@@ -509,64 +500,6 @@ HTML_TEMPLATE = """
             <span class="tool-badge">问答</span>
             <h3 class="tool-title">知识问答</h3>
             <p class="tool-desc">向知识库提问获取答案</p>
-          </div>
-          <div class="tool-card" onclick="showTool('ask_rag_filtered')">
-            <div class="tool-icon" style="background: linear-gradient(135deg, #667eea, #764ba2);">🔍</div>
-            <span class="tool-badge">过滤</span>
-            <h3 class="tool-title">条件查询</h3>
-            <p class="tool-desc">带过滤条件的智能检索</p>
-          </div>
-        </div>
-      </section>
-
-      <!-- 统计工具组 -->
-      <section class="card" style="grid-column: span 6;">
-        <h2 class="section-title">📊 数据统计</h2>
-        <p class="section-desc">查看知识库和系统的统计信息</p>
-        <div class="tool-grid">
-          <div class="tool-card" onclick="showTool('get_knowledge_base_stats')">
-            <div class="tool-icon" style="background: linear-gradient(135deg, #f093fb, #f5576c);">📈</div>
-            <span class="tool-badge">知识库</span>
-            <h3 class="tool-title">库统计</h3>
-            <p class="tool-desc">文档和处理方法统计</p>
-          </div>
-          <div class="tool-card" onclick="showTool('get_embedding_cache_stats')">
-            <div class="tool-icon" style="background: linear-gradient(135deg, #4facfe, #00f2fe);">💾</div>
-            <span class="tool-badge">缓存</span>
-            <h3 class="tool-title">缓存统计</h3>
-            <p class="tool-desc">嵌入缓存性能统计</p>
-          </div>
-          <div class="tool-card" onclick="showTool('get_vector_database_stats')">
-            <div class="tool-icon" style="background: linear-gradient(135deg, #ffecd2, #fcb69f);">📊</div>
-            <span class="tool-badge">统计</span>
-            <h3 class="tool-title">库统计</h3>
-            <p class="tool-desc">向量数据库统计信息</p>
-          </div>
-        </div>
-      </section>
-
-      <!-- 向量库处理工具组 -->
-      <section class="card" style="grid-column: span 6;">
-        <h2 class="section-title">⚙️ 向量库管理</h2>
-        <p class="section-desc">优化和维护向量数据库性能</p>
-        <div class="tool-grid">
-          <div class="tool-card" onclick="showTool('clear_embedding_cache_tool')">
-            <div class="tool-icon" style="background: linear-gradient(135deg, #fa709a, #fee140);">🗑️</div>
-            <span class="tool-badge">清理</span>
-            <h3 class="tool-title">清理缓存</h3>
-            <p class="tool-desc">清除嵌入缓存释放内存</p>
-          </div>
-          <div class="tool-card" onclick="showTool('optimize_vector_database')">
-            <div class="tool-icon" style="background: linear-gradient(135deg, #a8edea, #fed6e3);">🚀</div>
-            <span class="tool-badge">优化</span>
-            <h3 class="tool-title">优化数据库</h3>
-            <p class="tool-desc">提升搜索性能</p>
-          </div>
-          <div class="tool-card" onclick="showTool('reindex_vector_database')">
-            <div class="tool-icon" style="background: linear-gradient(135deg, #ff9a9e, #fecfef);">🔄</div>
-            <span class="tool-badge">重建</span>
-            <h3 class="tool-title">重建索引</h3>
-            <p class="tool-desc">重新索引向量数据库</p>
           </div>
         </div>
       </section>
