@@ -171,9 +171,10 @@ configure_rag_state(
 
 
 @mcp.tool()
-def get_context(query: str) -> str:
+def get_context(**kwargs) -> str:
     """用户想查询已有资料或者需要知识库时调用"""
     try:
+        query = kwargs.get("query", "")
         from tools.search_tools import get_context_tool
         return get_context_tool(query, k=5)
     except Exception as e:

@@ -28,9 +28,24 @@ from .search_tools import (
 )
 
 # 提供一个包装函数，保证函数 __name__ 为 get_context，使得 web UI 能正确识别和展示
-def get_context(query: str, k: int = 5) -> str:
-    """返回用于 QA 的 context 文本（包装自 get_context_tool）。"""
-    return get_context_tool(query, k=k)
+def get_context(*args, **kwargs) -> str:
+    """返回用于 QA 的 context 文本（包装自 get_context_tool）。
+
+    支持位置参数或关键字参数：query, k
+    """
+    try:
+        if 'query' in kwargs:
+            query = kwargs.get('query')
+        else:
+            query = args[0] if len(args) > 0 else ''
+        if 'k' in kwargs:
+            k = int(kwargs.get('k'))
+        else:
+            k = int(args[1]) if len(args) > 1 else 5
+        return get_context_tool(query, k=k)
+    except Exception:
+        # 保证在任意异常情况下返回空字符串而不是抛出
+        return ""
 
 # 配置所有工具模块中RAG状态的函数
 def configure_rag_state(rag_state, initialize_rag_func=None, save_processed_copy_func=None):
