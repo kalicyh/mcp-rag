@@ -22,9 +22,15 @@ from .document_tools import (
 
 from .search_tools import (
     ask_rag,
+    get_context_tool,
     set_rag_state as set_search_rag_state,
     set_initialize_rag_func as set_search_initialize_rag_func
 )
+
+# 提供一个包装函数，保证函数 __name__ 为 get_context，使得 web UI 能正确识别和展示
+def get_context(query: str, k: int = 5) -> str:
+    """返回用于 QA 的 context 文本（包装自 get_context_tool）。"""
+    return get_context_tool(query, k=k)
 
 # 配置所有工具模块中RAG状态的函数
 def configure_rag_state(rag_state, initialize_rag_func=None, save_processed_copy_func=None):
@@ -54,14 +60,16 @@ ALL_TOOLS = [
     learn_document,
     
     # 搜索工具
-    ask_rag
+    ask_rag,
+    get_context
 ]
 
 # 按名称注册的字典
 TOOLS_BY_NAME = {
     "learn_text": learn_text,
     "learn_document": learn_document,
-    "ask_rag": ask_rag
+    "ask_rag": ask_rag,
+    "get_context": get_context
 }
 
 __all__ = [
@@ -71,6 +79,7 @@ __all__ = [
     
     # 搜索工具
     "ask_rag",
+    "get_context",
     
     # 配置
     "configure_rag_state",

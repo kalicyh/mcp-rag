@@ -25,25 +25,36 @@ from services.cloud_openai import (
     ensure_client,
     embed_query,
 )
+from utils.config import Config
 
 
 _VECTOR_STORE: Optional[Any] = None
-_STORE_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "vector_store", "cloud_store.json")
+_STORE_PATH = os.path.join(os.path.abspath(Config.VECTOR_STORE_DIR), "cloud_store.json")
 
 
 def get_vector_store(profile: str = 'auto') -> Any:
     global _VECTOR_STORE
     if _VECTOR_STORE is None:
+        # Ensure configured rag directories exist
+        try:
+            Config.ensure_directories()
+        except Exception:
+            # best-effort fallback: ensure parent dir of store path exists
+            try:
+                os.makedirs(os.path.dirname(_STORE_PATH), exist_ok=True)
+            except Exception:
+                pass
+
         _VECTOR_STORE = OpenAIVectorStore()
         # 尝试加载持久化(JSON)
         try:
             loaded = _VECTOR_STORE.load_from_file(os.path.abspath(_STORE_PATH))
             if loaded > 0:
-                log(f"核心: 已初始化 OpenAI 内存向量库并加载 {loaded} 条记录 (cloud-only)")
+                log(f"核心: 已初始化 OpenAI 向量库并加载 {loaded} 条记录 (cloud-only)")
             else:
-                log("核心: 已初始化 OpenAI 内存向量库 (cloud-only)")
+                log("核心: 已初始化 OpenAI 向量库")
         except Exception:
-            log("核心: 已初始化 OpenAI 内存向量库 (cloud-only)")
+            log("核心: 已初始化 OpenAI 向量库")
     return _VECTOR_STORE
 
 
@@ -66,7 +77,7 @@ def flatten_metadata(metadata: Dict[str, Any], prefix: str = "") -> Dict[str, An
     flat: Dict[str, Any] = {}
     for k, v in (metadata or {}).items():
         key = f"{prefix}{k}" if prefix else k
-    # 跳过 None
+        # 跳过 None
         if v is None:
             continue
         if isinstance(v, dict):
@@ -172,6 +183,28 @@ class QAChain:
 
 def get_qa_chain(vector_store: Any, metadata_filter: dict | None = None) -> QAChain:
     return QAChain(vector_store, metadata_filter)
+
+
+def get_context_for_query(vector_store: Any, query: str, metadata_filter: dict | None = None, k: int = 5) -> str:
+    """
+    返回与 QAChain.invoke 中相同格式的 context 字符串，方便作为独立工具被调用。
+
+    Args:
+        vector_store: 向量库对象，需支持 search(query, k, filter) 接口。
+        query: 查询字符串。
+        metadata_filter: 可选的元数据过滤器。
+        k: 返回的 top-k 数量。
+
+    Returns:
+        拼接后的 context 字符串。
+    """
+    try:
+        top = vector_store.search(query, k=k, filter=metadata_filter)
+        context = "\n\n".join([x.get("text", "")[:1200] for x in top])
+    except Exception:
+        # 在任何异常情况下返回空字符串，调用方可识别为空并记录日志
+        context = ""
+    return context
 
 
 def search_with_metadata_filters(vector_store: Any, query: str, metadata_filter: dict | None = None, k: int = 5) -> List[SimpleDocument]:

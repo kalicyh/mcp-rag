@@ -60,7 +60,7 @@ def save_processed_copy(file_path: str, processed_content: str, processing_metho
         return save_processed_copy_func(file_path, processed_content, processing_method)
     return ""
 
-def learn_text(text: str, source_name: str = "manual_input") -> str:
+def learn_text(text: str, source_name: str = "手动输入") -> str:
     """
     将新的文本片段添加到 RAG 知识库以供将来参考。
     当您想要教授AI应该记住的新信息时使用此功能。
@@ -84,7 +84,7 @@ def learn_text(text: str, source_name: str = "manual_input") -> str:
             source=source_name,
             input_type="manual_text",
             processed_date=datetime.now(),
-            processing_method="manual_input",
+            processing_method="手动输入",
             chunking_method="standard",
             chunk_count=1,
             avg_chunk_size=len(text)

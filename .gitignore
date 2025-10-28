@@ -83,3 +83,4 @@ venv.bak/
 data/*
 mcp_server_organized_cloud/data/*
 uploads/
+rag/

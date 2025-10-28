@@ -23,9 +23,9 @@ class Config:
     SERVER_VERSION = "1.0.0"
     
     # 数据路径
-    CONVERTED_DOCS_DIR = "./data/documents"
-    VECTOR_STORE_DIR = "./data/vector_store"
-    EMBEDDING_CACHE_DIR = "./embedding_cache"
+    CONVERTED_DOCS_DIR = "./rag/documents"
+    VECTOR_STORE_DIR = "./rag/vector_store"
+    EMBEDDING_CACHE_DIR = "./rag/embedding_cache"
     
     # 模型配置
     EMBEDDING_MODEL = "all-MiniLM-L6-v2"

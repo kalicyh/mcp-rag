@@ -51,12 +51,13 @@ TOOL_CHINESE = {
     'learn_text': '添加文本到知识库（手动输入）',
     'learn_document': '处理并添加本地文档到知识库（文件路径）',
     'ask_rag': '基于知识库回答问题（返回简洁回答）'
+  , 'get_context': '返回用于 QA 的 context 文本（仅 context）'
 }
 
 app = Flask(__name__)
 app.config['SESSION_TYPE'] = 'filesystem'
 app.config['SECRET_KEY'] = os.urandom(24)  # 用于session加密
-app.config['UPLOAD_FOLDER'] = 'uploads'
+app.config['UPLOAD_FOLDER'] = './rag/uploads'
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max file size
 
 # 确保上传目录存在
@@ -389,13 +390,20 @@ HTML_TEMPLATE = """
         <div style="margin-bottom: 1.5rem;">
           <h3 style="font-size: 1.1rem; font-weight: 600; margin-bottom: 1rem; color: var(--accent-blue);">🔑 API 配置</h3>
           <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1rem;">
-            <div>
-              <label style="display: block; font-weight: bold; margin-bottom: 0.5rem; color: var(--text-primary);">
-                OPENAI_API_KEY <span style="color: #e74c3c;">*</span>
-              </label>
-              <input type="password" id="openai-api-key" class="param-input" 
-                     placeholder="输入您的 OpenAI API Key" 
-                     value="{{ env_vars.get('OPENAI_API_KEY', '') }}">
+            <div style="display:flex; gap:0.5rem; align-items:center;">
+              <div style="flex:1;">
+                <label style="display: block; font-weight: bold; margin-bottom: 0.5rem; color: var(--text-primary);">
+                  OPENAI_API_KEY <span style="color: #e74c3c;">*</span>
+                </label>
+                <input type="password" id="openai-api-key" class="param-input" 
+                       placeholder="输入您的 OpenAI API Key" 
+                       value="{{ env_vars.get('OPENAI_API_KEY', '') }}">
+              </div>
+              <div style="display:flex; flex-direction:column; gap:0.5rem;">
+                <button id="toggle-api-key" onclick="toggleApiKeyVisibility()" style="padding:0.45rem 0.8rem; border-radius:8px; background:#f0f0f0; border:1px solid #ddd; cursor:pointer;">
+                  显示
+                </button>
+              </div>
             </div>
             <!-- 高级配置折叠触发器（默认收起，保留 API Key 可见） -->
             <div style="display:flex; align-items:center; gap:0.5rem;">
@@ -501,6 +509,12 @@ HTML_TEMPLATE = """
             <h3 class="tool-title">知识问答</h3>
             <p class="tool-desc">向知识库提问获取答案</p>
           </div>
+          <div class="tool-card" onclick="showTool('get_context')">
+            <div class="tool-icon" style="background: linear-gradient(135deg, #5cc8ff, #4facfe);">📎</div>
+            <span class="tool-badge">上下文</span>
+            <h3 class="tool-title">获取 Context</h3>
+            <p class="tool-desc">返回用于 QA 的检索片段（仅 context 文本）</p>
+          </div>
         </div>
       </section>
     </div>
@@ -544,31 +558,26 @@ HTML_TEMPLATE = """
           paramsContainer.innerHTML = '';
 
           if (tool.parameters && tool.parameters.length > 0) {
-            tool.parameters.forEach(param => {
-              const paramDiv = document.createElement('div');
-              
-              // 特殊处理 learn_document 工具的文件上传
-              if (toolName === 'learn_document' && param.name === 'file_path') {
-                paramDiv.innerHTML = `
-                  <label style="display: block; font-weight: bold; margin-bottom: 0.5rem;">
-                    ${param.name} (文件) ${param.required ? '*' : ''}
-                  </label>
-                  <input type="file" id="modal-param-${param.name}" 
-                         accept=".pdf,.docx,.txt,.md,.html,.csv,.json,.xml,.pptx,.xlsx,.odt,.odp,.ods,.rtf,.png,.jpg,.jpeg,.tiff,.bmp,.eml,.msg"
-                         style="width: 100%; padding: 0.5rem; border: 1px solid #ddd; border-radius: 8px; font-family: inherit; font-size: 0.9rem;">
-                  <small style="color: #666; font-size: 0.8rem;">支持的文件类型: PDF, Word, Excel, PowerPoint, 文本文件, 图片等</small>
-                `;
-              } else {
-                paramDiv.innerHTML = `
-                  <label style="display: block; font-weight: bold; margin-bottom: 0.5rem;">
-                    ${param.name} (${param.type}) ${param.required ? '*' : ''}
-                  </label>
-                  <input type="text" class="param-input" id="modal-param-${param.name}"
-                         placeholder="${param.default || '输入参数值'}" value="${param.default || ''}">
-                `;
-              }
-              paramsContainer.appendChild(paramDiv);
-            });
+            // 仅渲染第一个参数的输入框，并且不显示参数标题/标签
+            const param = tool.parameters[0];
+            const paramDiv = document.createElement('div');
+
+            if (toolName === 'learn_document' && param.name === 'file_path') {
+              // 文件上传使用 file input，但不显示标签
+              paramDiv.innerHTML = `
+                <input type="file" id="modal-param-${param.name}" 
+                       accept=".pdf,.docx,.txt,.md,.html,.csv,.json,.xml,.pptx,.xlsx,.odt,.odp,.ods,.rtf,.png,.jpg,.jpeg,.tiff,.bmp,.eml,.msg"
+                       style="width: 100%; padding: 0.5rem; border: 1px solid #ddd; border-radius: 8px; font-family: inherit; font-size: 0.9rem;">
+                <small style="color: #666; font-size: 0.8rem;">支持的文件类型: PDF, Word, Excel, PowerPoint, 文本文件, 图片等</small>
+              `;
+            } else {
+              // 文本参数：仅显示输入框（无 label），保持 placeholder
+              paramDiv.innerHTML = `
+                <input type="text" class="param-input" id="modal-param-${param.name}"
+                       placeholder="${param.default || '输入参数值'}" value="">
+              `;
+            }
+            paramsContainer.appendChild(paramDiv);
           }
 
           const runBtn = document.getElementById('modal-run-btn');
@@ -623,15 +632,18 @@ HTML_TEMPLATE = """
                 body: formData
               });
             } else {
-              // 收集参数
+              // 仅收集第一个参数的值（忽略其余参数）
               const args = {};
-              if (currentTool.parameters) {
-                currentTool.parameters.forEach(param => {
-                  const input = document.getElementById(`modal-param-${param.name}`);
-                  if (input && input.value.trim()) {
+              if (currentTool.parameters && currentTool.parameters.length > 0) {
+                const param = currentTool.parameters[0];
+                const input = document.getElementById(`modal-param-${param.name}`);
+                if (input) {
+                  if (input.type === 'file') {
+                    // 文件上传分支已在上层处理（learn_document），这里跳过
+                  } else if (input.value && input.value.trim()) {
                     args[param.name] = input.value.trim();
                   }
-                });
+                }
               }
 
               response = await fetch('/run_tool', {
@@ -735,6 +747,19 @@ HTML_TEMPLATE = """
             statusDiv.className = 'status error';
             statusDiv.textContent = `❌ 网络错误: ${error.message}`;
             statusDiv.style.display = 'block';
+          }
+        }
+
+        function toggleApiKeyVisibility() {
+          const input = document.getElementById('openai-api-key');
+          const btn = document.getElementById('toggle-api-key');
+          if (!input || !btn) return;
+          if (input.type === 'password') {
+            input.type = 'text';
+            btn.textContent = '隐藏';
+          } else {
+            input.type = 'password';
+            btn.textContent = '显示';
           }
         }
 
@@ -937,16 +962,16 @@ def index():
     tools_data = get_tool_info()
     # 获取当前环境变量
     env_vars = {
-        'OPENAI_API_KEY': '***已设置***' if os.getenv('OPENAI_API_KEY') else '',
+        'OPENAI_API_KEY': os.getenv('OPENAI_API_KEY', ''),
         'OPENAI_API_BASE': os.getenv('OPENAI_API_BASE', 'https://ark.cn-beijing.volces.com/api/v3'),
         'OPENAI_MODEL': os.getenv('OPENAI_MODEL', 'doubao-1-5-pro-32k-250115'),
         'OPENAI_EMBEDDING_MODEL': os.getenv('OPENAI_EMBEDDING_MODEL', 'doubao-embedding-text-240715'),
         'OPENAI_TEMPERATURE': os.getenv('OPENAI_TEMPERATURE', '0')
     }
     return render_template_string(HTML_TEMPLATE,
-                               tools_data=tools_data,
-                               mutating_tools=list(MUTATING_TOOLS),
-                               env_vars=env_vars)
+                                  tools_data=tools_data,
+                                  mutating_tools=list(MUTATING_TOOLS),
+                                  env_vars=env_vars)
 
 @app.route('/save_env', methods=['POST'])
 def save_env():

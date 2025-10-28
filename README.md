@@ -106,17 +106,6 @@ OPENAI_EMBEDDING_MODEL=text-embedding-3-large
 - `ask_rag(query)` - 基于知识库回答问题
 - `ask_rag_filtered(query, file_type, min_tables, min_titles, processing_method)` - 带过滤条件的智能检索
 
-### 数据统计
-- `get_knowledge_base_stats()` - 显示知识库统计信息
-- `get_embedding_cache_stats()` - 显示嵌入缓存统计
-- `get_data_paths()` - 查看存储路径信息
-
-### 向量库管理
-- `clear_embedding_cache_tool()` - 清理嵌入缓存
-- `optimize_vector_database()` - 优化向量数据库性能
-- `get_vector_database_stats()` - 显示向量数据库统计
-- `reindex_vector_database()` - 重新索引向量数据库
-
 ## 支持格式
 
 支持超过 25 种文档格式，包括 PDF、DOCX、PPTX、XLSX、图片、邮件等。

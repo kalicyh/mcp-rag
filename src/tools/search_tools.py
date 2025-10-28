@@ -10,7 +10,6 @@ MCP 搜索工具
 
 from rag_core_openai import (
     get_qa_chain,
-    create_metadata_filter
 )
 from utils.logger import log
 
@@ -148,123 +147,35 @@ def ask_rag(query: str) -> str:
         answer = response.get("result", "")
         source_documents = response.get("source_documents", [])
 
-        # 优先返回简洁的回答文本（去掉来源与建议）
+        # 优先返回简洁的回答文本（去掉来源与建议），否则退回到完整回答
         concise = extract_brief_answer(response.get("result", ""))
         if concise:
             log(f"MCP服务器：成功生成简洁回答，使用了 {len(source_documents)} 个来源")
             return concise
-        
-        # 验证是否真的有相关信息
-        if not source_documents:
-            # 没有来源 - LLM 可能在产生幻觉
-            enhanced_answer = f"🤖 回答：\n\n❌ 在知识库中未找到相关信息来回答您的问题。\n\n"
-            enhanced_answer += "💡 建议：\n"
-            enhanced_answer += "• 验证您是否已加载与问题相关的文档\n"
-            enhanced_answer += "• 尝试用更具体的术语重新表述您的问题\n"
-            enhanced_answer += "• 使用 `get_knowledge_base_stats()` 查看可用信息\n"
-            enhanced_answer += "• 考虑加载更多关于您感兴趣主题的文档\n\n"
-            enhanced_answer += "⚠️ 注意： 系统只能基于之前加载到知识库中的信息进行回答。"
-            
-            log(f"MCP服务器：未找到相关来源回答问题")
-            return enhanced_answer
-        
-        # 验证回答是否可能是幻觉
-        # 如果没有来源但有回答，可能是幻觉
-        if len(source_documents) == 0 and answer.strip():
-            enhanced_answer = f"🤖 回答：\n\n❌ 在知识库中未找到特定信息来回答您的问题。\n\n"
-            enhanced_answer += "💡 建议：\n"
-            enhanced_answer += "• 验证您是否已加载与问题相关的文档\n"
-            enhanced_answer += "• 尝试用更具体的术语重新表述您的问题\n"
-            enhanced_answer += "• 使用 `get_knowledge_base_stats()` 查看可用信息\n\n"
-            enhanced_answer += "⚠️ 注意： 系统只能基于之前加载到知识库中的信息进行回答。"
-            
-            log(f"MCP服务器：检测到可能的幻觉回答（无来源）")
-            return enhanced_answer
-        
-        # 如果有来源，构建正常回答
-        enhanced_answer = f"🤖 回答：\n\n{answer}\n"
-        
-        # 使用结构化模型添加更详细的来源信息
-        if source_documents:
-            enhanced_answer += "📚 使用的信息来源：\n\n"
-            for i, doc in enumerate(source_documents, 1):
-                raw_metadata = doc.metadata if hasattr(doc, 'metadata') else {}
-                
-                # 使用结构化模型处理元数据
-                doc_info = process_document_metadata(raw_metadata)
-                
-                # --- 改进来源信息 ---
-                source_info = f"   {i}. {doc_info['source']}"
-                
-                # 如果是文档，添加完整路径
-                if doc_info['file_path']:
-                    source_info += f"\n      - 路径： `{doc_info['file_path']}`"
-                
-                # 如果可用，添加文件类型
-                if doc_info['file_type']:
-                    source_info += f"\n      - 类型： {(doc_info.get('file_type') or 'unknown').upper()}"
-                
-                # 如果可用，添加处理方法
-                if doc_info['processing_method']:
-                    method_display = doc_info['processing_method'].replace('_', ' ').title()
-                    source_info += f"\n      - 处理： {method_display}"
-                
-                # 使用模型数据添加结构信息
-                if doc_info['total_elements'] > 0:
-                    source_info += f"\n      - 结构： {doc_info['total_elements']} 个元素"
-                    
-                    structural_details = []
-                    if doc_info['titles_count'] > 0:
-                        structural_details.append(f"{doc_info['titles_count']} 个标题")
-                    if doc_info['tables_count'] > 0:
-                        structural_details.append(f"{doc_info['tables_count']} 个表格")
-                    if doc_info['lists_count'] > 0:
-                        structural_details.append(f"{doc_info['lists_count']} 个列表")
-                    
-                    if structural_details:
-                        source_info += f" ({', '.join(structural_details)})"
-                
-                # 如果可用，添加分块信息
-                if doc_info['chunking_method'] and doc_info['chunking_method'] != "未知":
-                    chunking_display = doc_info['chunking_method'].replace('_', ' ').title()
-                    source_info += f"\n      - 分块： {chunking_display}"
-                
-                # 如果可用，添加丰富内容指示器
-                if doc_info.get('is_rich_content', False):
-                    source_info += f"\n      - 质量： 结构丰富的内容"
-                
-                enhanced_answer += source_info + "\n\n"
-        
-        # 添加回答质量信息
-        num_sources = len(source_documents)
-        if num_sources >= 3:
-            enhanced_answer += "\n✅ 高可信度： 基于多个来源的回答"
-        elif num_sources == 2:
-            enhanced_answer += "\n⚠️ 中等可信度： 基于 2 个来源的回答"
-        else:
-            enhanced_answer += "\n⚠️ 有限可信度： 基于 1 个来源的回答"
-        
-        # 使用结构化模型添加处理信息
-        enhanced_docs = []
-        rich_content_docs = []
-        
-        for doc in source_documents:
-            if hasattr(doc, 'metadata') and doc.metadata:
-                doc_info = process_document_metadata(doc.metadata)
-                if doc_info['processing_method'] == "unstructured_enhanced":
-                    enhanced_docs.append(doc)
-                if doc_info.get('is_rich_content', False):
-                    rich_content_docs.append(doc)
-        
-        if enhanced_docs:
-            enhanced_answer += f"\n🧠 智能处理： {len(enhanced_docs)} 个来源使用 Unstructured 处理（保留结构）"
-        
-        if rich_content_docs:
-            enhanced_answer += f"\n📊 结构化内容： {len(rich_content_docs)} 个来源具有丰富结构（标题、表格、列表）"
-        
-        log(f"MCP服务器：成功生成回答，使用了 {len(source_documents)} 个来源")
-        return enhanced_answer
+        # concise 为空时，返回原始 answer（可能包含更多上下文或模型信息）
+        log(f"MCP服务器：未提取到简洁回答，返回完整回答（长度 {len(answer)}）")
+        return answer
         
     except Exception as e:
         log(f"MCP服务器：处理问题时出错：{e}")
-        return f"❌ 处理问题时出错： {e}\n\n💡 建议：\n- 验证 RAG 系统是否正确初始化\n- 尝试重新表述您的问题\n- 如果问题持续存在，请重启服务器" 
+        return f"❌ 处理问题时出错： {e}" 
+
+def get_context_tool(query: str, k: int = 5) -> str:
+    """
+    MCP tool: 返回与 QAChain.invoke 中相同的 context 内容（仅 context 字符串），便于在调试或外部流程中复用。
+
+    使用全局 rag_state 中的 vector_store。
+    """
+    log(f"MCP服务器：获取 context，query={query}, k={k}")
+    initialize_rag()
+    try:
+        vs = rag_state.get("vector_store")
+        if not vs:
+            raise RuntimeError("vector_store 未初始化")
+        from rag_core_openai import get_context_for_query
+    
+        ctx = get_context_for_query(vs, query, metadata_filter=None, k=k)
+        return ctx
+    except Exception as e:
+        log(f"MCP服务器：获取 context 时出错：{e}")
+        return ""
