@@ -509,12 +509,6 @@ HTML_TEMPLATE = """
             <h3 class="tool-title">知识问答</h3>
             <p class="tool-desc">向知识库提问获取答案</p>
           </div>
-          <div class="tool-card" onclick="showTool('get_context')">
-            <div class="tool-icon" style="background: linear-gradient(135deg, #5cc8ff, #4facfe);">📎</div>
-            <span class="tool-badge">上下文</span>
-            <h3 class="tool-title">获取 Context</h3>
-            <p class="tool-desc">返回用于 QA 的检索片段（仅 context 文本）</p>
-          </div>
         </div>
       </section>
     </div>
