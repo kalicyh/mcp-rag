@@ -4,6 +4,10 @@
 
 > 支持使用豆包与OpenAI
 
+<a href="https://glama.ai/mcp/servers/@kalicyh/mcp-rag">
+  <img width="380" height="200" src="https://glama.ai/mcp/servers/@kalicyh/mcp-rag/badge" alt="RAG MCP server" />
+</a>
+
 ## ✨ 主要特性
 
 - **🧠 智能知识库**：基于向量检索的 RAG 系统，支持语义搜索和智能问答
