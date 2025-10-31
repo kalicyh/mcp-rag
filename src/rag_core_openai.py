@@ -173,7 +173,17 @@ class QAChain:
             {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {query}"},
         ]
         try:
-            resp = client.chat.completions.create(model=model, messages=msgs, temperature=float(os.environ.get("OPENAI_TEMPERATURE", "0")))
+            base_url = os.environ.get("OPENAI_API_BASE", "https://api.openai.com/v1")
+            if base_url == "https://ark.cn-beijing.volces.com/api/v3":
+                # For Ark client, disable thinking
+                resp = client.chat.completions.create(
+                    model=model, 
+                    messages=msgs, 
+                    temperature=float(os.environ.get("OPENAI_TEMPERATURE", "0")),
+                    thinking={"type": "disabled"}
+                )
+            else:
+                resp = client.chat.completions.create(model=model, messages=msgs, temperature=float(os.environ.get("OPENAI_TEMPERATURE", "0")))
             answer = resp.choices[0].message.content or ""
         except Exception as e:
             answer = f"[OpenAI 调用失败] {e}"

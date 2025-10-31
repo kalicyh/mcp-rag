@@ -12,11 +12,8 @@ import json
 from dotenv import load_dotenv, dotenv_values
 from pathlib import Path
 
-# 加载项目根目录的 .env（如果存在），并将当前值缓存
-ROOT = Path(__file__).resolve().parents[1]
-DOTENV_PATH = ROOT / '.env'
-load_dotenv(DOTENV_PATH)
-_env_cache = dotenv_values(DOTENV_PATH) if DOTENV_PATH.exists() else {}
+# 导入统一配置管理
+from utils.config import Config
 
 # 导入 server 以初始化 mcp
 try:
@@ -57,8 +54,8 @@ TOOL_CHINESE = {
 app = Flask(__name__)
 app.config['SESSION_TYPE'] = 'filesystem'
 app.config['SECRET_KEY'] = os.urandom(24)  # 用于session加密
-app.config['UPLOAD_FOLDER'] = './rag/uploads'
-app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max file size
+app.config['UPLOAD_FOLDER'] = Config.UPLOAD_FOLDER
+app.config['MAX_CONTENT_LENGTH'] = Config.MAX_CONTENT_LENGTH
 
 # 确保上传目录存在
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
@@ -955,13 +952,7 @@ def upload_file():
 def index():
     tools_data = get_tool_info()
     # 获取当前环境变量
-    env_vars = {
-        'OPENAI_API_KEY': os.getenv('OPENAI_API_KEY', ''),
-        'OPENAI_API_BASE': os.getenv('OPENAI_API_BASE', 'https://ark.cn-beijing.volces.com/api/v3'),
-        'OPENAI_MODEL': os.getenv('OPENAI_MODEL', 'doubao-1-5-pro-32k-250115'),
-        'OPENAI_EMBEDDING_MODEL': os.getenv('OPENAI_EMBEDDING_MODEL', 'doubao-embedding-text-240715'),
-        'OPENAI_TEMPERATURE': os.getenv('OPENAI_TEMPERATURE', '0')
-    }
+    env_vars = Config.get_web_env_vars()
     return render_template_string(HTML_TEMPLATE,
                                   tools_data=tools_data,
                                   mutating_tools=list(MUTATING_TOOLS),
@@ -990,35 +981,18 @@ def save_env():
             except ValueError:
                 return jsonify({'success': False, 'error': 'OPENAI_TEMPERATURE 必须是数字'})
 
-        # 设置环境变量（进程级）
-        os.environ['OPENAI_API_KEY'] = api_key
-        if api_base:
-            os.environ['OPENAI_API_BASE'] = api_base
-        if model:
-            os.environ['OPENAI_MODEL'] = model
-        if embedding_model:
-            os.environ['OPENAI_EMBEDDING_MODEL'] = embedding_model
-        if temperature:
-            os.environ['OPENAI_TEMPERATURE'] = temperature
+        # 准备要保存的环境变量
+        env_vars_to_save = {
+            'OPENAI_API_KEY': api_key,
+            'OPENAI_API_BASE': api_base,
+            'OPENAI_MODEL': model,
+            'OPENAI_EMBEDDING_MODEL': embedding_model,
+            'OPENAI_TEMPERATURE': temperature
+        }
 
-        # 写回到 .env，保留已有其他键
-        env_vals = dict(_env_cache) if _env_cache else {}
-        env_vals['OPENAI_API_KEY'] = api_key
-        if api_base:
-            env_vals['OPENAI_API_BASE'] = api_base
-        if model:
-            env_vals['OPENAI_MODEL'] = model
-        if embedding_model:
-            env_vals['OPENAI_EMBEDDING_MODEL'] = embedding_model
-        if temperature:
-            env_vals['OPENAI_TEMPERATURE'] = temperature
-
-        # 将 dict 写回 .env（覆盖或新建）
-        with open(DOTENV_PATH, 'w', encoding='utf-8') as f:
-            for k, v in env_vals.items():
-                f.write(f"{k}={v}\n")
-        # 更新缓存
-        _env_cache.update(env_vals)
+        # 使用Config类保存环境变量
+        if not Config.save_env_vars(env_vars_to_save):
+            return jsonify({'success': False, 'error': '保存环境变量失败'})
 
         # 保存到 session
         session['OPENAI_API_KEY'] = api_key
@@ -1048,29 +1022,16 @@ def save_env():
 @app.route('/check_env', methods=['GET'])
 def check_env():
     """检查必要的环境变量是否已配置"""
-    required_vars = ['OPENAI_API_KEY']
-    missing = []
-    
-    for var in required_vars:
-        if not os.getenv(var):
-            missing.append(var)
-    
-    return jsonify({
-        'configured': len(missing) == 0,
-        'missing': missing,
-        'has_api_base': bool(os.getenv('OPENAI_API_BASE')),
-        'model': os.getenv('OPENAI_MODEL', 'doubao-1-5-pro-32k-250115'),
-        'embedding_model': os.getenv('OPENAI_EMBEDDING_MODEL', 'doubao-embedding-text-240715'),
-        'temperature': os.getenv('OPENAI_TEMPERATURE', '0')
-    })
+    return jsonify(Config.check_required_env_vars())
 
 @app.route('/run_tool', methods=['POST'])
 def run_tool():
     # 首先检查环境变量是否已配置
-    if not os.getenv('OPENAI_API_KEY'):
+    env_check = Config.check_required_env_vars()
+    if not env_check['configured']:
         return jsonify({
             'success': False, 
-            'error': '❌ OPENAI_API_KEY 未设置！请先在页面顶部的"环境变量配置"区域设置您的 API Key。'
+            'error': f'❌ OPENAI_API_KEY 未设置！请先在页面顶部的"环境变量配置"区域设置您的 API Key。'
         })
     
     # 检查是否是文件上传请求（FormData）
@@ -1181,4 +1142,4 @@ def build_default_value(param):
 if __name__ == '__main__':
     print("启动 MCP RAG Web 测试界面...")
     print("访问 http://localhost:5000 开始测试")
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    app.run(debug=Config.WEB_DEBUG, host=Config.WEB_HOST, port=Config.WEB_PORT)

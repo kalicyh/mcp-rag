@@ -28,8 +28,9 @@ import locale
 
 try:
     from openai import OpenAI
+    from volcenginesdkarkruntime import Ark
 except Exception as e:  # pragma: no cover
-    raise RuntimeError("openai package is required for cloud-only mode") from e
+    raise RuntimeError("openai and volcengine packages are required for cloud-only mode") from e
 
 
 _client: Optional[OpenAI] = None
@@ -38,11 +39,19 @@ _client: Optional[OpenAI] = None
 def ensure_client() -> OpenAI:
     global _client
     if _client is None:
-        api_key = os.environ.get("OPENAI_API_KEY")
+        api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("ARK_API_KEY")
         base_url = os.environ.get("OPENAI_API_BASE", "https://api.openai.com/v1")
         if not api_key:
-            raise RuntimeError("OPENAI_API_KEY is not set")
-        _client = OpenAI(api_key=api_key, base_url=base_url)
+            raise RuntimeError("OPENAI_API_KEY or ARK_API_KEY is not set")
+        if base_url == "https://ark.cn-beijing.volces.com/api/v3":
+            # Use Ark client for Volcengine
+            _client = Ark(
+                base_url=base_url,
+                api_key=api_key,
+                timeout=1800,
+            )
+        else:
+            _client = OpenAI(api_key=api_key, base_url=base_url)
     return _client
 
 
