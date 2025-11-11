@@ -432,16 +432,38 @@ async def documents_page():
                     const select = document.getElementById(selectId);
                     if (select) {
                         select.innerHTML = '';
-                        data.collections.forEach(collection => {
-                            const option = document.createElement('option');
-                            option.value = collection;
-                            option.textContent = collection;
-                            select.appendChild(option);
-                        });
+                        // Always add default collection first
+                        const defaultOption = document.createElement('option');
+                        defaultOption.value = 'default';
+                        defaultOption.textContent = '默认集合';
+                        select.appendChild(defaultOption);
+
+                        // Add other collections
+                        if (data.collections) {
+                            data.collections.forEach(collection => {
+                                if (collection !== 'default') {  // Avoid duplicate default
+                                    const option = document.createElement('option');
+                                    option.value = collection;
+                                    option.textContent = collection;
+                                    select.appendChild(option);
+                                }
+                            });
+                        }
                     }
                 });
             } catch (error) {
                 console.error('Failed to load collections:', error);
+                // Ensure default collection is always available
+                const selects = ['collectionSelect', 'searchCollection', 'textCollectionSelect', 'chatCollection'];
+                selects.forEach(selectId => {
+                    const select = document.getElementById(selectId);
+                    if (select && select.children.length === 0) {
+                        const defaultOption = document.createElement('option');
+                        defaultOption.value = 'default';
+                        defaultOption.textContent = '默认集合';
+                        select.appendChild(defaultOption);
+                    }
+                });
             }
         }
 

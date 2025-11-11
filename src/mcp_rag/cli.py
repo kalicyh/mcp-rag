@@ -3,7 +3,7 @@
 import typer
 from pathlib import Path
 
-from .main import run_server
+from .main import run_server, run_http_server_sync, run_stdio_server_sync
 from .config import settings
 
 app = typer.Typer()
@@ -11,9 +11,16 @@ app = typer.Typer()
 
 @app.command()
 def serve():
-    """启动MCP-RAG服务器（stdio + HTTP模式）。"""
-    typer.echo("启动MCP-RAG服务器（stdio + HTTP模式）")
-    run_server()
+    """启动MCP-RAG MCP stdio服务器。"""
+    typer.echo("启动MCP-RAG MCP stdio服务器...")
+    run_stdio_server_sync()
+
+
+@app.command()
+def web():
+    """启动MCP-RAG HTTP服务器。"""
+    typer.echo("启动MCP-RAG HTTP服务器...")
+    run_http_server_sync()
 
 
 @app.command()

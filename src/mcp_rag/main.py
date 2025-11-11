@@ -19,14 +19,19 @@ logger = logging.getLogger(__name__)
 
 
 async def run_stdio_server():
-    """Run the MCP stdio server."""
+    """Run the MCP stdio server only."""
     logger.info("启动MCP stdio服务器...")
     await mcp_server.start_stdio_server()
 
 
 async def run_http_server():
-    """Run the HTTP server."""
+    """Run the HTTP server only."""
     logger.info("启动HTTP服务器...")
+
+    # 确保数据目录存在
+    data_dir = Path(settings.chroma_persist_directory)
+    data_dir.mkdir(parents=True, exist_ok=True)
+
     config = uvicorn.Config(
         http_app,
         host="0.0.0.0",
@@ -35,6 +40,16 @@ async def run_http_server():
     )
     server = uvicorn.Server(config)
     await server.serve()
+
+
+def run_stdio_server_sync():
+    """同步包装器 for stdio server."""
+    asyncio.run(run_stdio_server())
+
+
+def run_http_server_sync():
+    """同步包装器 for HTTP server."""
+    asyncio.run(run_http_server())
 
 
 async def main():

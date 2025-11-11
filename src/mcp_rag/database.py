@@ -81,9 +81,43 @@ class ChromaDatabase(VectorDatabase):
             )
             self.client = chromadb.PersistentClient(path=settings.chroma_persist_directory)
             logger.info(f"Chroma database initialized at {settings.chroma_persist_directory}")
+
+            # Ensure default collection exists
+            await self._ensure_default_collection()
         except Exception as e:
             logger.error(f"Failed to initialize Chroma database: {e}")
             raise
+
+    async def _ensure_default_collection(self) -> None:
+        """Ensure the default collection exists with correct configuration."""
+        if not self.client:
+            return
+
+        try:
+            # Try to get the default collection
+            try:
+                collection = self.client.get_collection(name="default")
+                # Check if collection uses the correct distance metric
+                current_space = collection.metadata.get("hnsw:space") if collection.metadata else None
+                if current_space != "cosine":
+                    logger.warning(f"Default collection uses distance metric '{current_space}'. Recreating with cosine.")
+                    self.client.delete_collection(name="default")
+                    collection = self.client.create_collection(
+                        name="default",
+                        metadata={"hnsw:space": "cosine"}
+                    )
+                    logger.info("Recreated default collection with cosine similarity")
+            except Exception:
+                # Collection doesn't exist, create it with cosine similarity
+                collection = self.client.create_collection(
+                    name="default",
+                    metadata={"hnsw:space": "cosine"}
+                )
+                logger.info("Created default collection with cosine similarity")
+
+        except Exception as e:
+            logger.error(f"Failed to ensure default collection: {e}")
+            # Don't raise here as this is not critical for initialization
 
     async def add_document(self, content: str, collection_name: str = "default", metadata: Dict[str, Any] = None) -> None:
         """Add a single document to Chroma collection."""
@@ -107,10 +141,23 @@ class ChromaDatabase(VectorDatabase):
             # Get or create collection
             try:
                 collection = self.client.get_collection(name=collection_name)
+                # Check if collection uses the correct distance metric
+                current_space = collection.metadata.get("hnsw:space") if collection.metadata else None
+                if current_space != "cosine":
+                    logger.warning(f"Collection '{collection_name}' uses distance metric '{current_space}'. Recreating with cosine.")
+                    self.client.delete_collection(name=collection_name)
+                    collection = self.client.create_collection(
+                        name=collection_name,
+                        metadata={"hnsw:space": "cosine"}
+                    )
+                    logger.info(f"Recreated collection '{collection_name}' with cosine similarity")
             except Exception:
-                # Collection doesn't exist, create it
-                collection = self.client.create_collection(name=collection_name)
-                logger.info(f"Created collection '{collection_name}'")
+                # Collection doesn't exist, create it with cosine similarity
+                collection = self.client.create_collection(
+                    name=collection_name,
+                    metadata={"hnsw:space": "cosine"}
+                )
+                logger.info(f"Created collection '{collection_name}' with cosine similarity")
 
             # Prepare data for Chroma
             ids = [doc.id for doc in documents]
@@ -143,7 +190,7 @@ class ChromaDatabase(VectorDatabase):
         limit: int = 5,
         threshold: float = 0.7
     ) -> List[SearchResult]:
-        """Search Chroma collection using cosine similarity."""
+        """Search Chroma collection using built-in vector search."""
         if not self.client:
             raise RuntimeError("Database not initialized")
 
@@ -153,37 +200,32 @@ class ChromaDatabase(VectorDatabase):
                 logger.warning(f"Collection '{collection_name}' not found")
                 return []
 
-            # Get all documents and their embeddings
-            results = collection.get(include=["documents", "metadatas", "embeddings"])
-            embeddings = results.get("embeddings", [])
-            logger.info(f"Embeddings type: {type(embeddings)}, length: {len(embeddings) if hasattr(embeddings, '__len__') else 'N/A'}")
-            if embeddings is None or (hasattr(embeddings, '__len__') and len(embeddings) == 0):
-                logger.warning("No embeddings found in collection")
-                return []
-
-            import numpy as np
-            from sklearn.metrics.pairwise import cosine_similarity
-
-            query_emb = np.array(query_embedding).reshape(1, -1)
-            doc_embeddings = np.array(results["embeddings"])
-
-            # Calculate cosine similarities
-            similarities = cosine_similarity(query_emb, doc_embeddings)[0]
+            # Use ChromaDB's built-in vector search
+            results = collection.query(
+                query_embeddings=[query_embedding],
+                n_results=limit,
+                include=["documents", "metadatas", "distances"]
+            )
 
             # Create search results
             search_results = []
-            for i, similarity in enumerate(similarities):
-                if similarity >= threshold:
-                    document = Document(
-                        id=results["ids"][i],
-                        content=results["documents"][i],
-                        metadata=results["metadatas"][i] if results["metadatas"] else {}
-                    )
-                    search_results.append(SearchResult(document=document, score=float(similarity)))
+            if results["distances"] and results["documents"] and len(results["distances"]) > 0:
+                distances = results["distances"][0]
+                documents = results["documents"][0]
+                ids = results["ids"][0] if results["ids"] else []
+                metadatas = results["metadatas"][0] if results["metadatas"] else []
 
-            # Sort by score and limit results
-            search_results.sort(key=lambda x: x.score, reverse=True)
-            search_results = search_results[:limit]
+                for i, distance in enumerate(distances):
+                    # For cosine distance, similarity = 1 - distance
+                    similarity = 1 - distance
+
+                    if similarity >= threshold:
+                        document = Document(
+                            id=ids[i] if i < len(ids) else f"result_{i}",
+                            content=documents[i],
+                            metadata=metadatas[i] if i < len(metadatas) else {}
+                        )
+                        search_results.append(SearchResult(document=document, score=float(similarity)))
 
             logger.info(f"Found {len(search_results)} results above threshold {threshold}")
             return search_results
