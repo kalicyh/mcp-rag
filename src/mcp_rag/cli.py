@@ -12,7 +12,7 @@ app = typer.Typer()
 @app.command()
 def serve():
     """启动MCP-RAG MCP stdio服务器。"""
-    typer.echo("启动MCP-RAG MCP stdio服务器...")
+    # 注意：不要使用 typer.echo，因为 stdout 必须只用于 MCP 协议消息
     run_stdio_server_sync()
 
 

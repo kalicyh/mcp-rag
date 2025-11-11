@@ -29,8 +29,8 @@ class MCPServer:
             """列出可用的MCP工具。"""
             return [
                 Tool(
-                    name="rag_retrieve",
-                    description="使用RAG从知识库中检索相关文档",
+                    name="rag_ask",
+                    description="用户想要查询的知识点或问题",
                     inputSchema={
                         "type": "object",
                         "properties": {
@@ -72,7 +72,7 @@ class MCPServer:
         @self.server.call_tool()
         async def call_tool(name: str, arguments: Dict[str, Any]) -> Sequence[types.TextContent]:
             """调用MCP工具。"""
-            if name == "rag_retrieve":
+            if name == "rag_ask":
                 try:
                     logger.info(f"开始处理RAG检索请求: {arguments.get('query', 'unknown')}")
                     
@@ -147,7 +147,8 @@ class MCPServer:
 
             # 启动stdio服务器
             async with stdio_server() as (read_stream, write_stream):
-                await self.server.run(read_stream, write_stream, {})
+                initialization_options = self.server.create_initialization_options()
+                await self.server.run(read_stream, write_stream, initialization_options)
         except Exception as e:
             logger.error(f"MCP服务器启动失败: {e}")
             raise
