@@ -4,8 +4,6 @@ import logging
 from abc import ABC, abstractmethod
 from typing import List, Optional
 
-from sentence_transformers import SentenceTransformer
-
 from .config import settings
 
 logger = logging.getLogger(__name__)
@@ -16,6 +14,14 @@ try:
 except ImportError:
     HTTPX_AVAILABLE = False
     logger.warning("httpx not available, Doubao embedding will not work")
+
+try:
+    from sentence_transformers import SentenceTransformer
+    SENTENCE_TRANSFORMERS_AVAILABLE = True
+except ImportError:
+    SENTENCE_TRANSFORMERS_AVAILABLE = False
+    SentenceTransformer = None
+    logger.warning("sentence-transformers not available, local embedding models will not work. Install with: pip install mcp-rag[local-embeddings]")
 
 DOUBAO_AVAILABLE = HTTPX_AVAILABLE
 
@@ -38,10 +44,13 @@ class SentenceTransformerModel(EmbeddingModel):
     """SentenceTransformer-based embedding model."""
 
     def __init__(self, model_name: str = "m3e-small", device: str = "cpu", cache_dir: Optional[str] = None):
+        if not SENTENCE_TRANSFORMERS_AVAILABLE:
+            raise RuntimeError("sentence-transformers not available. Install with: pip install mcp-rag[local-embeddings]")
+        
         self.model_name = model_name
         self.device = device
         self.cache_dir = cache_dir
-        self.model: Optional[SentenceTransformer] = None
+        self.model = None
 
     async def initialize(self) -> None:
         """Initialize the embedding model."""

@@ -15,7 +15,7 @@
 
 - **后端框架**: FastAPI
 - **向量数据库**: ChromaDB (本地部署)
-- **嵌入模型**: m3e-small / e5-small (Sentence Transformers), Doubao 嵌入 API
+- **嵌入模型**: Doubao 嵌入 API (默认), 本地模型可选 (m3e-small / e5-small via sentence-transformers)
 - **LLM 模型**: Doubao API, Ollama (本地部署)
 - **协议**: MCP (Model Context Protocol)
 - **包管理**: uv (现代化 Python 包管理器)
@@ -30,7 +30,11 @@
 ### 2. 安装依赖
 
 ```bash
+# 基础安装 (仅云端API)
 uv sync
+
+# 如果需要使用本地embedding模型 (m3e-small, e5-small)
+uv sync --extra local-embeddings
 ```
 
 ### 3. 启动服务
