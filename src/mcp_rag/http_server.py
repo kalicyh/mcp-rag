@@ -61,6 +61,12 @@ class BatchUploadResponse(BaseModel):
     results: List[FileUploadResponse]
 
 
+class DeleteDocumentRequest(BaseModel):
+    """Delete document request model."""
+    document_id: str
+    collection: str = "default"
+
+
 @app.get("/")
 async def root():
     """Root endpoint - redirect to config page."""
@@ -305,6 +311,7 @@ async def documents_page():
             <div class="tab active" onclick="switchTab('upload')">资料上传</div>
             <div class="tab" onclick="switchTab('search')">资料查询</div>
             <div class="tab" onclick="switchTab('chat')">知识库对话</div>
+            <div class="tab" onclick="switchTab('manage')">内容管理</div>
         </div>
 
         <div id="upload" class="tab-content active">
@@ -396,6 +403,28 @@ async def documents_page():
                 <div class="status-message" id="chatStatusMessage"></div>
             </div>
         </div>
+
+        <div id="manage" class="tab-content">
+            <div class="section">
+                <h2>内容管理</h2>
+                <div style="margin-bottom: 15px;">
+                    <select id="manageCollection" style="padding: 8px; border: 1px solid #ddd; border-radius: 4px; margin-right: 10px;" onchange="loadDocuments()">
+                        <option value="default">默认集合</option>
+                    </select>
+                    <button class="btn" onclick="loadDocuments()">刷新列表</button>
+                </div>
+
+                <div id="documentList"></div>
+                
+                <div style="margin-top: 20px; text-align: center;">
+                    <button class="btn" onclick="prevPage()" id="prevPageBtn" disabled>上一页</button>
+                    <span id="pageInfo" style="margin: 0 10px;">第 1 页</span>
+                    <button class="btn" onclick="nextPage()" id="nextPageBtn" disabled>下一页</button>
+                </div>
+
+                <div class="status-message" id="manageStatusMessage"></div>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -426,7 +455,7 @@ async def documents_page():
             try {
                 const response = await fetch(`${API_BASE}/collections`);
                 const data = await response.json();
-                const selects = ['collectionSelect', 'searchCollection', 'textCollectionSelect', 'chatCollection'];
+                const selects = ['collectionSelect', 'searchCollection', 'textCollectionSelect', 'chatCollection', 'manageCollection'];
 
                 selects.forEach(selectId => {
                     const select = document.getElementById(selectId);
@@ -454,7 +483,7 @@ async def documents_page():
             } catch (error) {
                 console.error('Failed to load collections:', error);
                 // Ensure default collection is always available
-                const selects = ['collectionSelect', 'searchCollection', 'textCollectionSelect', 'chatCollection'];
+                const selects = ['collectionSelect', 'searchCollection', 'textCollectionSelect', 'chatCollection', 'manageCollection'];
                 selects.forEach(selectId => {
                     const select = document.getElementById(selectId);
                     if (select && select.children.length === 0) {
@@ -789,6 +818,108 @@ async def documents_page():
             }, 5000);
         }
 
+        // Content Management Functions
+        let currentPage = 0;
+        const pageSize = 10;
+
+        async function loadDocuments(page = 0) {
+            currentPage = page;
+            const collection = document.getElementById('manageCollection').value;
+            const listDiv = document.getElementById('documentList');
+            
+            listDiv.innerHTML = '<div style="text-align: center; padding: 20px;">加载中...</div>';
+            
+            try {
+                const response = await fetch(`${API_BASE}/list-documents?collection=${collection}&limit=${pageSize}&offset=${page * pageSize}`);
+                if (!response.ok) throw new Error('Failed to load documents');
+                
+                const data = await response.json();
+                
+                listDiv.innerHTML = '';
+                if (data.documents.length === 0) {
+                    listDiv.innerHTML = '<div style="text-align: center; padding: 20px; color: #666;">暂无文档</div>';
+                } else {
+                    data.documents.forEach(doc => {
+                        const item = document.createElement('div');
+                        item.className = 'file-item';
+                        item.innerHTML = `
+                            <div class="file-info">
+                                <div class="file-name">ID: ${doc.id}</div>
+                                <div class="file-meta">
+                                    ${doc.metadata.filename ? `文件: ${doc.metadata.filename}` : ''}
+                                    ${doc.metadata.timestamp ? ` | 时间: ${new Date(doc.metadata.timestamp).toLocaleString()}` : ''}
+                                </div>
+                                <div class="preview-content" style="margin-top: 5px; max-height: 100px;">
+                                    ${doc.content.substring(0, 200)}${doc.content.length > 200 ? '...' : ''}
+                                </div>
+                            </div>
+                            <div>
+                                <button class="btn btn-danger" onclick="deleteDocument('${doc.id}')">删除</button>
+                            </div>
+                        `;
+                        listDiv.appendChild(item);
+                    });
+                }
+                
+                // Update pagination
+                document.getElementById('pageInfo').textContent = `第 ${currentPage + 1} 页`;
+                document.getElementById('prevPageBtn').disabled = currentPage === 0;
+                document.getElementById('nextPageBtn').disabled = data.documents.length < pageSize;
+                
+            } catch (error) {
+                listDiv.innerHTML = `<div style="color: red; text-align: center;">加载失败: ${error.message}</div>`;
+            }
+        }
+
+        async function deleteDocument(docId) {
+            if (!confirm('确定要删除这个文档吗？')) return;
+            
+            const collection = document.getElementById('manageCollection').value;
+            
+            try {
+                const response = await fetch(`${API_BASE}/delete-document`, {
+                    method: 'DELETE',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        document_id: docId,
+                        collection: collection
+                    })
+                });
+                
+                if (response.ok) {
+                    showManageStatus('删除成功', true);
+                    loadDocuments(currentPage);
+                } else {
+                    const error = await response.json();
+                    showManageStatus('删除失败: ' + (error.detail || '未知错误'), false);
+                }
+            } catch (error) {
+                showManageStatus('删除失败: ' + error.message, false);
+            }
+        }
+
+        function prevPage() {
+            if (currentPage > 0) {
+                loadDocuments(currentPage - 1);
+            }
+        }
+
+        function nextPage() {
+            loadDocuments(currentPage + 1);
+        }
+
+        function showManageStatus(message, isSuccess = true) {
+            const statusDiv = document.getElementById('manageStatusMessage');
+            statusDiv.textContent = message;
+            statusDiv.className = `status-message ${isSuccess ? 'status-success' : 'status-error'}`;
+            statusDiv.style.display = 'block';
+            setTimeout(() => {
+                statusDiv.style.display = 'none';
+            }, 5000);
+        }
+
         // Initialize
         document.addEventListener('DOMContentLoaded', function() {
             loadCollections();
@@ -1019,7 +1150,7 @@ async def config_page():
             </div>
             <div class="form-group">
                 <label for="embedding_api_key">豆包API密钥:</label>
-                <input type="password" id="embedding_api_key" placeholder="您的豆包API密钥">
+                <input type="text" id="embedding_api_key" placeholder="您的豆包API密钥">
             </div>
             <div class="form-group">
                 <label for="embedding_base_url">豆包API基础地址:</label>
@@ -1058,7 +1189,7 @@ async def config_page():
             </div>
             <div class="form-group">
                 <label for="llm_api_key">API 密钥:</label>
-                <input type="password" id="llm_api_key" placeholder="可选">
+                <input type="text" id="llm_api_key" placeholder="可选">
             </div>
             <div class="form-group">
                 <div class="checkbox-group">
@@ -1490,4 +1621,30 @@ async def search_documents(query: str, collection: str = "default", limit: int =
         }
     except Exception as e:
         logger.error(f"Failed to search: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/list-documents")
+async def list_documents(collection: str = "default", limit: int = 100, offset: int = 0):
+    """List documents in a collection."""
+    try:
+        db = await get_vector_database()
+        result = await db.list_documents(collection_name=collection, limit=limit, offset=offset)
+        return result
+    except Exception as e:
+        logger.error(f"Error listing documents: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/delete-document")
+async def delete_document(request: DeleteDocumentRequest):
+    """Delete a document."""
+    try:
+        db = await get_vector_database()
+        success = await db.delete_document(document_id=request.document_id, collection_name=request.collection)
+        if success:
+            return {"message": "Document deleted successfully"}
+        else:
+            raise HTTPException(status_code=404, detail="Document not found or failed to delete")
+    except Exception as e:
+        logger.error(f"Error deleting document: {e}")
         raise HTTPException(status_code=500, detail=str(e))

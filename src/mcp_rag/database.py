@@ -63,6 +63,16 @@ class VectorDatabase(ABC):
         """List all collections."""
         pass
 
+    @abstractmethod
+    async def list_documents(self, collection_name: str = "default", limit: int = 100, offset: int = 0) -> Dict[str, Any]:
+        """List documents in a collection."""
+        pass
+
+    @abstractmethod
+    async def delete_document(self, document_id: str, collection_name: str = "default") -> bool:
+        """Delete a document from a collection."""
+        pass
+
 
 class ChromaDatabase(VectorDatabase):
     """Chroma vector database implementation."""
@@ -259,6 +269,58 @@ class ChromaDatabase(VectorDatabase):
         except Exception as e:
             logger.error(f"Failed to list collections: {e}")
             raise
+
+    async def list_documents(self, collection_name: str = "default", limit: int = 100, offset: int = 0) -> Dict[str, Any]:
+        """List documents in a Chroma collection."""
+        if not self.client:
+            raise RuntimeError("Database not initialized")
+
+        try:
+            collection = self.client.get_collection(name=collection_name)
+            # Get all documents with metadata
+            result = collection.get(
+                limit=limit,
+                offset=offset,
+                include=["metadatas", "documents"]
+            )
+            
+            documents = []
+            if result["ids"]:
+                for i, doc_id in enumerate(result["ids"]):
+                    documents.append({
+                        "id": doc_id,
+                        "content": result["documents"][i] if result["documents"] else "",
+                        "metadata": result["metadatas"][i] if result["metadatas"] else {}
+                    })
+            
+            # Get total count (approximation as Chroma doesn't have a direct count method efficiently exposed in all versions)
+            # For now, we'll just return what we have. In a real app, we might want a separate count query.
+            total = collection.count()
+            
+            return {
+                "total": total,
+                "documents": documents,
+                "limit": limit,
+                "offset": offset
+            }
+        except Exception as e:
+            logger.error(f"Failed to list documents in '{collection_name}': {e}")
+            # Return empty result if collection doesn't exist or other error
+            return {"total": 0, "documents": [], "limit": limit, "offset": offset}
+
+    async def delete_document(self, document_id: str, collection_name: str = "default") -> bool:
+        """Delete a document from a Chroma collection."""
+        if not self.client:
+            raise RuntimeError("Database not initialized")
+
+        try:
+            collection = self.client.get_collection(name=collection_name)
+            collection.delete(ids=[document_id])
+            logger.info(f"Deleted document '{document_id}' from '{collection_name}'")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to delete document '{document_id}' from '{collection_name}': {e}")
+            return False
 
 
 # Global database instance
