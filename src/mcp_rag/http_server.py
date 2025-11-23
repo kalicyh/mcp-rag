@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Dict, Any, List
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 import tempfile
 import shutil
@@ -69,8 +69,8 @@ class DeleteDocumentRequest(BaseModel):
 
 @app.get("/")
 async def root():
-    """Root endpoint - redirect to config page."""
-    return {"message": "MCP-RAG HTTP API", "version": "0.3.16", "config_url": "/config-page", "documents_url": "/documents-page"}
+    """Root endpoint - redirect to documents page."""
+    return RedirectResponse(url="/documents-page")
 
 
 @app.get("/documents-page", response_class=HTMLResponse)
@@ -1407,6 +1407,9 @@ async def add_document(doc: DocumentAdd):
     except Exception as e:
         logger.error(f"Failed to add document: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/upload-files")
 async def upload_files(
     files: List[UploadFile] = File(...),
     collection: str = Form("default")

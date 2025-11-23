@@ -38,6 +38,10 @@ async def run_http_server():
         port=settings.http_port if hasattr(settings, 'http_port') else 8000,
         log_level="info"
     )
+    
+    port = settings.http_port if hasattr(settings, 'http_port') else 8000
+    print(f"\n访问地址: http://127.0.0.1:{port}\n")
+    
     server = uvicorn.Server(config)
     await server.serve()
 
