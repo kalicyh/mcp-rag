@@ -67,6 +67,12 @@ class DeleteDocumentRequest(BaseModel):
     collection: str = "default"
 
 
+class DeleteFileRequest(BaseModel):
+    """Delete file request model."""
+    filename: str
+    collection: str = "default"
+
+
 @app.get("/")
 async def root():
     """Root endpoint - redirect to documents page."""
@@ -248,20 +254,6 @@ async def documents_page():
         }
         .btn-success:hover {
             background-color: #218838;
-        }
-        .collection-select {
-            margin-bottom: 15px;
-        }
-        .collection-select select {
-            padding: 8px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-            font-size: 14px;
-        }
-        .progress-bar {
-            width: 100%;
-            height: 20px;
-            background: #f8f9fa;
             border-radius: 10px;
             overflow: hidden;
             margin: 10px 0;
@@ -296,6 +288,16 @@ async def documents_page():
         }
         .chat-message.assistant {
             text-align: left;
+        }
+        .view-toggle {
+            margin-bottom: 15px;
+        }
+        .view-toggle .btn {
+            margin-right: 5px;
+            background-color: #6c757d;
+        }
+        .view-toggle .btn.active {
+            background-color: #007bff;
         }
     </style>
 </head>
@@ -414,9 +416,15 @@ async def documents_page():
                     <button class="btn" onclick="loadDocuments()">刷新列表</button>
                 </div>
 
-                <div id="documentList"></div>
+                <div class="view-toggle">
+                    <button class="btn active" id="btn-view-files" onclick="switchView('files')">文件视图</button>
+                    <button class="btn" id="btn-view-docs" onclick="switchView('docs')">片段视图</button>
+                </div>
+
+                <div id="fileListContainer"></div>
+                <div id="documentList" style="display: none;"></div>
                 
-                <div style="margin-top: 20px; text-align: center;">
+                <div style="margin-top: 20px; text-align: center;" id="pagination">
                     <button class="btn" onclick="prevPage()" id="prevPageBtn" disabled>上一页</button>
                     <span id="pageInfo" style="margin: 0 10px;">第 1 页</span>
                     <button class="btn" onclick="nextPage()" id="nextPageBtn" disabled>下一页</button>
@@ -439,6 +447,9 @@ async def documents_page():
             // Show selected tab
             document.querySelector(`[onclick="switchTab('${tabName}')"]`).classList.add('active');
             document.getElementById(tabName).classList.add('active');
+            
+            // Save current tab to localStorage
+            localStorage.setItem('currentTab', tabName);
         }
 
         function showStatus(message, isSuccess = true) {
@@ -496,18 +507,14 @@ async def documents_page():
             }
         }
 
-        function handleFileSelect(files) {
-            Array.from(files).forEach(file => {
-                if (!uploadedFiles.find(f => f.name === file.name && f.size === file.size)) {
-                    uploadedFiles.push(file);
-                }
-            });
-            updateFileList();
-        }
-
         function updateFileList() {
             const fileList = document.getElementById('fileList');
             fileList.innerHTML = '';
+            
+            if (uploadedFiles.length === 0) {
+                fileList.innerHTML = '<div style="text-align: center; color: #666;">暂无文件</div>';
+                return;
+            }
 
             uploadedFiles.forEach((file, index) => {
                 const fileItem = document.createElement('div');
@@ -527,6 +534,19 @@ async def documents_page():
 
         function removeFile(index) {
             uploadedFiles.splice(index, 1);
+            updateFileList();
+        }
+
+        function handleFileSelect(files) {
+            if (!files || files.length === 0) return;
+            
+            Array.from(files).forEach(file => {
+                // Check if file already exists
+                if (!uploadedFiles.some(f => f.name === file.name)) {
+                    uploadedFiles.push(file);
+                }
+            });
+            
             updateFileList();
         }
 
@@ -644,6 +664,7 @@ async def documents_page():
                 });
 
                 // Display LLM summary if available
+                // Display LLM summary if available
                 if (data.summary) {
                     const summaryDiv = document.createElement('div');
                     summaryDiv.className = 'file-item';
@@ -666,8 +687,8 @@ async def documents_page():
         }
 
         async function addTextDocument() {
-            const content = document.getElementById('documentContent').value.trim();
             const title = document.getElementById('documentTitle').value.trim();
+            const content = document.getElementById('documentContent').value.trim();
             const collection = document.getElementById('textCollectionSelect').value;
 
             if (!content) {
@@ -821,25 +842,176 @@ async def documents_page():
         // Content Management Functions
         let currentPage = 0;
         const pageSize = 10;
+        let currentView = 'files';
+        let currentFileFilter = null;
+
+        async function switchView(view) {
+            currentView = view;
+            document.getElementById('btn-view-files').className = view === 'files' ? 'btn active' : 'btn';
+            document.getElementById('btn-view-docs').className = view === 'docs' ? 'btn active' : 'btn';
+            
+            document.getElementById('fileListContainer').style.display = view === 'files' ? 'block' : 'none';
+            document.getElementById('documentList').style.display = view === 'docs' ? 'block' : 'none';
+            
+            // Hide pagination in file view for now
+            document.getElementById('pagination').style.display = view === 'docs' ? 'block' : 'none';
+            
+            // Save current view to localStorage
+            localStorage.setItem('currentView', view);
+
+            if (view === 'files') {
+                // Clear file filter when switching to file view
+                currentFileFilter = null;
+                const filterInfo = document.getElementById('fileFilterInfo');
+                if (filterInfo) {
+                    filterInfo.remove();
+                }
+                await loadFiles();
+            } else {
+                currentPage = 0;
+                await loadDocuments();
+            }
+        }
+
+        async function loadFiles() {
+            const collection = document.getElementById('manageCollection').value || 'default';
+            const listDiv = document.getElementById('fileListContainer');
+            listDiv.innerHTML = '<div style="text-align: center; padding: 20px;">加载中...</div>';
+
+            try {
+                const response = await fetch(`${API_BASE}/list-files?collection=${collection}`);
+                const data = await response.json();
+                
+                listDiv.innerHTML = '';
+                
+                if (!data.files || data.files.length === 0) {
+                    listDiv.innerHTML = '<div style="text-align: center; padding: 20px; color: #666;">暂无文件</div>';
+                    return;
+                }
+
+                data.files.forEach(file => {
+                    const itemDiv = document.createElement('div');
+                    itemDiv.className = 'file-item';
+                    
+                    const fileInfo = document.createElement('div');
+                    fileInfo.className = 'file-info';
+                    fileInfo.innerHTML = `
+                        <div class="file-name">文件: ${file.filename}</div>
+                        <div class="file-meta">
+                            类型: ${file.file_type} | 片段数: ${file.chunk_count} | 总大小: ${(file.total_size / 1024).toFixed(1)} KB
+                        </div>
+                    `;
+                    
+                    const buttonContainer = document.createElement('div');
+                    
+                    const viewChunksBtn = document.createElement('button');
+                    viewChunksBtn.className = 'btn';
+                    viewChunksBtn.textContent = '查看片段';
+                    viewChunksBtn.onclick = () => viewFileChunks(file.filename);
+                    
+                    const deleteBtn = document.createElement('button');
+                    deleteBtn.className = 'btn btn-danger';
+                    deleteBtn.textContent = '删除';
+                    deleteBtn.onclick = () => deleteFile(file.filename);
+                    
+                    buttonContainer.appendChild(viewChunksBtn);
+                    buttonContainer.appendChild(deleteBtn);
+                    
+                    itemDiv.appendChild(fileInfo);
+                    itemDiv.appendChild(buttonContainer);
+                    listDiv.appendChild(itemDiv);
+                });
+            } catch (error) {
+                listDiv.innerHTML = `<div style="color: red; text-align: center;">加载失败: ${error.message}</div>`;
+            }
+        }
+
+        async function deleteFile(filename) {
+            if (!confirm(`确定要删除文件 "${filename}" 及其所有片段吗？`)) {
+                return;
+            }
+
+            const collection = document.getElementById('manageCollection').value || 'default';
+            try {
+                const response = await fetch(`${API_BASE}/delete-file`, {
+                    method: 'DELETE',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        filename: filename,
+                        collection: collection
+                    })
+                });
+
+                if (response.ok) {
+                    showStatus('文件删除成功', true);
+                    loadFiles();
+                } else {
+                    const error = await response.json();
+                    showStatus('删除失败: ' + (error.detail || '未知错误'), false);
+                }
+            } catch (error) {
+                showStatus('删除请求失败: ' + error.message, false);
+            }
+        }
+
+        function viewFileChunks(filename) {
+            currentFileFilter = filename;
+            switchView('docs');
+        }
 
         async function loadDocuments(page = 0) {
+            if (currentView === 'files') {
+                await loadFiles();
+                return;
+            }
+
             currentPage = page;
             const collection = document.getElementById('manageCollection').value;
             const listDiv = document.getElementById('documentList');
             
+            // Remove any existing filter info first
+            const existingFilterInfo = document.getElementById('fileFilterInfo');
+            if (existingFilterInfo) {
+                existingFilterInfo.remove();
+            }
+            
+            // Show filter info if active
+            if (currentFileFilter) {
+                const filterInfo = document.createElement('div');
+                filterInfo.id = 'fileFilterInfo';
+                filterInfo.style.marginBottom = '15px';
+                filterInfo.style.padding = '10px';
+                filterInfo.style.background = '#e3f2fd';
+                filterInfo.style.border = '1px solid #007acc';
+                filterInfo.style.borderRadius = '5px';
+                filterInfo.innerHTML = `
+                    正在显示文件的片段: <strong>${currentFileFilter}</strong>
+                    <button class="btn" onclick="clearFileFilter()" style="margin-left: 10px;">显示全部</button>
+                `;
+                listDiv.parentElement.insertBefore(filterInfo, listDiv);
+            }
+            
             listDiv.innerHTML = '<div style="text-align: center; padding: 20px;">加载中...</div>';
             
             try {
-                const response = await fetch(`${API_BASE}/list-documents?collection=${collection}&limit=${pageSize}&offset=${page * pageSize}`);
+                // Add filename parameter if filtering by file
+                const filenameParam = currentFileFilter ? `&filename=${encodeURIComponent(currentFileFilter)}` : '';
+                const response = await fetch(`${API_BASE}/list-documents?collection=${collection}&limit=${pageSize}&offset=${page * pageSize}${filenameParam}`);
                 if (!response.ok) throw new Error('Failed to load documents');
                 
                 const data = await response.json();
                 
                 listDiv.innerHTML = '';
-                if (data.documents.length === 0) {
+                
+                // No need to filter on frontend anymore - backend handles it
+                const filteredDocs = data.documents;
+                
+                if (filteredDocs.length === 0) {
                     listDiv.innerHTML = '<div style="text-align: center; padding: 20px; color: #666;">暂无文档</div>';
                 } else {
-                    data.documents.forEach(doc => {
+                    filteredDocs.forEach(doc => {
                         const item = document.createElement('div');
                         item.className = 'file-item';
                         item.innerHTML = `
@@ -864,7 +1036,7 @@ async def documents_page():
                 // Update pagination
                 document.getElementById('pageInfo').textContent = `第 ${currentPage + 1} 页`;
                 document.getElementById('prevPageBtn').disabled = currentPage === 0;
-                document.getElementById('nextPageBtn').disabled = data.documents.length < pageSize;
+                document.getElementById('nextPageBtn').disabled = filteredDocs.length < pageSize;
                 
             } catch (error) {
                 listDiv.innerHTML = `<div style="color: red; text-align: center;">加载失败: ${error.message}</div>`;
@@ -920,9 +1092,33 @@ async def documents_page():
             }, 5000);
         }
 
+        function clearFileFilter() {
+            currentFileFilter = null;
+            // Remove filter info element by ID
+            const filterInfo = document.getElementById('fileFilterInfo');
+            if (filterInfo) {
+                filterInfo.remove();
+            }
+            loadDocuments(0);
+        }
+
         // Initialize
-        document.addEventListener('DOMContentLoaded', function() {
-            loadCollections();
+        document.addEventListener('DOMContentLoaded', async function() {
+            await loadCollections();
+            
+            // Restore tab state from localStorage
+            const savedTab = localStorage.getItem('currentTab');
+            if (savedTab && ['upload', 'search', 'chat', 'manage'].includes(savedTab)) {
+                switchTab(savedTab);
+            }
+            
+            // Restore view state from localStorage
+            const savedView = localStorage.getItem('currentView');
+            if (savedView && ['files', 'docs'].includes(savedView)) {
+                switchView(savedView);
+            } else {
+                switchView('files');
+            }
 
             // File input handling
             document.getElementById('fileInput').addEventListener('change', function(e) {
@@ -1165,28 +1361,6 @@ async def config_page():
             </div>
             <div class="form-group">
                 <label for="embedding_cache_dir">缓存目录 (仅本地模型):</label>
-                <input type="text" id="embedding_cache_dir" placeholder="可选">
-            </div>
-        </div>
-
-        <div class="section">
-            <h2>LLM 设置</h2>
-            <div class="form-group">
-                <label for="llm_provider">LLM 提供商:</label>
-                <select id="llm_provider">
-                    <option value="ollama">Ollama</option>
-                    <option value="doubao">Doubao</option>
-                    <option value="chatglm">ChatGLM</option>
-                </select>
-            </div>
-            <div class="form-group">
-                <label for="llm_model">模型名称:</label>
-                <input type="text" id="llm_model" placeholder="qwen2:7b">
-            </div>
-            <div class="form-group">
-                <label for="llm_base_url">API 基础地址:</label>
-                <input type="text" id="llm_base_url" placeholder="http://localhost:11434">
-            </div>
             <div class="form-group">
                 <label for="llm_api_key">API 密钥:</label>
                 <input type="text" id="llm_api_key" placeholder="可选">
@@ -1627,11 +1801,11 @@ async def search_documents(query: str, collection: str = "default", limit: int =
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/list-documents")
-async def list_documents(collection: str = "default", limit: int = 100, offset: int = 0):
+async def list_documents(collection: str = "default", limit: int = 100, offset: int = 0, filename: str = None):
     """List documents in a collection."""
     try:
         db = await get_vector_database()
-        result = await db.list_documents(collection_name=collection, limit=limit, offset=offset)
+        result = await db.list_documents(collection_name=collection, limit=limit, offset=offset, filename=filename)
         return result
     except Exception as e:
         logger.error(f"Error listing documents: {e}")
@@ -1650,4 +1824,31 @@ async def delete_document(request: DeleteDocumentRequest):
             raise HTTPException(status_code=404, detail="Document not found or failed to delete")
     except Exception as e:
         logger.error(f"Error deleting document: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/list-files")
+async def list_files(collection: str = "default"):
+    """List files in a collection."""
+    try:
+        db = await get_vector_database()
+        result = await db.list_files(collection_name=collection)
+        return {"files": result}
+    except Exception as e:
+        logger.error(f"Error listing files: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/delete-file")
+async def delete_file(request: DeleteFileRequest):
+    """Delete a file."""
+    try:
+        db = await get_vector_database()
+        success = await db.delete_file(filename=request.filename, collection_name=request.collection)
+        if success:
+            return {"message": "File deleted successfully"}
+        else:
+            raise HTTPException(status_code=404, detail="File not found or failed to delete")
+    except Exception as e:
+        logger.error(f"Error deleting file: {e}")
         raise HTTPException(status_code=500, detail=str(e))

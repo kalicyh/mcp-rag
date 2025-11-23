@@ -64,7 +64,7 @@ class VectorDatabase(ABC):
         pass
 
     @abstractmethod
-    async def list_documents(self, collection_name: str = "default", limit: int = 100, offset: int = 0) -> Dict[str, Any]:
+    async def list_documents(self, collection_name: str = "default", limit: int = 100, offset: int = 0, filename: Optional[str] = None) -> Dict[str, Any]:
         """List documents in a collection."""
         pass
 
@@ -73,6 +73,50 @@ class VectorDatabase(ABC):
         """Delete a document from a collection."""
         pass
 
+    @abstractmethod
+    async def list_files(self, collection_name: str = "default") -> List[Dict[str, Any]]:
+        """List all files in a collection."""
+        pass
+
+    @abstractmethod
+    async def delete_file(self, filename: str, collection_name: str = "default") -> bool:
+        """Delete all documents associated with a file from a Chroma collection."""
+        if not self.client:
+            raise RuntimeError("Database not initialized")
+
+        try:
+            collection = self.client.get_collection(name=collection_name)
+            
+            # Get all documents
+            result = collection.get(include=["metadatas"])
+            
+            # Find IDs to delete
+            ids_to_delete = []
+            if result["ids"] and result["metadatas"]:
+                for idx, metadata in enumerate(result["metadatas"]):
+                    doc_id = result["ids"][idx]
+                    
+                    # Check if metadata has filename
+                    if metadata.get("filename") == filename:
+                        ids_to_delete.append(doc_id)
+                    # For legacy chunks without filename metadata, check ID
+                    elif "_chunk_" in doc_id:
+                        base_id = doc_id.rsplit("_chunk_", 1)[0]
+                        if base_id == filename:
+                            ids_to_delete.append(doc_id)
+                    elif doc_id == filename:
+                        ids_to_delete.append(doc_id)
+            
+            if ids_to_delete:
+                collection.delete(ids=ids_to_delete)
+                logger.info(f"Deleted {len(ids_to_delete)} chunks for file '{filename}' from '{collection_name}'")
+            else:
+                logger.warning(f"No chunks found for file '{filename}' in '{collection_name}'")
+            
+            return True
+        except Exception as e:
+            logger.error(f"Failed to delete file '{filename}' from '{collection_name}': {e}")
+            return False
 
 class ChromaDatabase(VectorDatabase):
     """Chroma vector database implementation."""
@@ -133,6 +177,22 @@ class ChromaDatabase(VectorDatabase):
         """Add a single document to Chroma collection."""
         if metadata is None:
             metadata = {}
+
+        # Auto-generate filename if not provided
+        if "filename" not in metadata:
+            if "title" in metadata and metadata["title"]:
+                # Use title as filename (sanitized)
+                filename = metadata["title"].strip()[:50]  # Limit length
+                # Replace invalid filename characters
+                for char in ['/', '\\', ':', '*', '?', '"', '<', '>', '|']:
+                    filename = filename.replace(char, '_')
+            else:
+                # Generate default filename with timestamp
+                from datetime import datetime
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                filename = f"手动输入_{timestamp}"
+            
+            metadata["filename"] = filename
 
         document = Document(
             id=f"doc_{len(content)}_{hash(content)}",  # Simple ID generation
@@ -304,7 +364,7 @@ class ChromaDatabase(VectorDatabase):
             logger.error(f"Failed to list collections: {e}")
             raise
 
-    async def list_documents(self, collection_name: str = "default", limit: int = 100, offset: int = 0) -> Dict[str, Any]:
+    async def list_documents(self, collection_name: str = "default", limit: int = 100, offset: int = 0, filename: Optional[str] = None) -> Dict[str, Any]:
         """List documents in a Chroma collection."""
         if not self.client:
             raise RuntimeError("Database not initialized")
@@ -312,7 +372,9 @@ class ChromaDatabase(VectorDatabase):
         try:
             collection = self.client.get_collection(name=collection_name)
             # Get all documents with metadata
+            where_clause = {"filename": filename} if filename else None
             result = collection.get(
+                where=where_clause,
                 limit=limit,
                 offset=offset,
                 include=["metadatas", "documents"]
@@ -354,6 +416,71 @@ class ChromaDatabase(VectorDatabase):
             return True
         except Exception as e:
             logger.error(f"Failed to delete document '{document_id}' from '{collection_name}': {e}")
+            return False
+
+    async def list_files(self, collection_name: str = "default") -> List[Dict[str, Any]]:
+        """List all files in a Chroma collection."""
+        if not self.client:
+            raise RuntimeError("Database not initialized")
+
+        try:
+            collection = self.client.get_collection(name=collection_name)
+            # Get all metadatas and IDs
+            result = collection.get(include=["metadatas"])
+            
+            files = {}
+            if result["metadatas"] and result["ids"]:
+                for idx, metadata in enumerate(result["metadatas"]):
+                    doc_id = result["ids"][idx]
+                    
+                    # Try to get filename from metadata first
+                    filename = metadata.get("filename")
+                    
+                    # If no filename in metadata, try to extract from ID
+                    # For legacy chunks like "doc_150000_-9093687922038414764_chunk_34"
+                    # or new chunks like "some_id_chunk_0"
+                    if not filename:
+                        # Check if this is a chunk (has _chunk_ in ID)
+                        if "_chunk_" in doc_id:
+                            # Remove the chunk suffix to get the base ID
+                            filename = doc_id.rsplit("_chunk_", 1)[0]
+                        else:
+                            # Not a chunk, use the ID as filename
+                            filename = doc_id
+                    
+                    if filename not in files:
+                        files[filename] = {
+                            "filename": filename,
+                            "chunk_count": 0,
+                            "total_size": 0,
+                            "file_type": metadata.get("file_type", "unknown"),
+                            "upload_time": metadata.get("timestamp", "")
+                        }
+                    
+                    files[filename]["chunk_count"] += 1
+                    # Approximate size if available, otherwise just count chunks
+                    files[filename]["total_size"] += metadata.get("size", 0)
+
+            return list(files.values())
+        except Exception as e:
+            logger.error(f"Failed to list files in '{collection_name}': {e}")
+            return []
+
+    async def delete_file(self, filename: str, collection_name: str = "default") -> bool:
+        """Delete all documents associated with a file from a Chroma collection."""
+        if not self.client:
+            raise RuntimeError("Database not initialized")
+
+        try:
+            collection = self.client.get_collection(name=collection_name)
+            
+            # Delete where metadata['filename'] == filename
+            collection.delete(where={"filename": filename})
+            
+            logger.info(f"Deleted file '{filename}' from '{collection_name}'")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to delete file '{filename}' from '{collection_name}': {e}")
             return False
 
 
