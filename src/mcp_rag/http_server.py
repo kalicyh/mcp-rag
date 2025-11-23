@@ -579,16 +579,23 @@ async def documents_page():
 
                 if (response.ok) {
                     progressFill.style.width = '100%';
-                    showStatus(`上传完成: ${result.successful}/${result.total_files} 个文件成功`, true);
+                    const successCount = typeof result.successful === 'number' ? result.successful : 0;
+                    const totalFiles = typeof result.total_files === 'number' ? result.total_files : uploadedFiles.length;
+
+                    if (successCount === totalFiles && totalFiles > 0) {
+                        showStatus(`上传完成: ${successCount}/${totalFiles} 个文件成功`, true);
+                        uploadedFiles = [];
+                        updateFileList();
+                    } else if (successCount > 0) {
+                        showStatus(`上传部分成功: ${successCount}/${totalFiles} 个文件成功`, false);
+                    } else {
+                        showStatus('上传失败: 所有文件处理失败', false);
+                    }
 
                     // Show results
                     result.results.forEach(fileResult => {
                         updateFileStatus(fileResult);
                     });
-
-                    // Clear uploaded files
-                    uploadedFiles = [];
-                    updateFileList();
                 } else {
                     showStatus('上传失败: ' + result.detail, false);
                 }
