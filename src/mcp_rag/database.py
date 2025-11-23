@@ -170,24 +170,58 @@ class ChromaDatabase(VectorDatabase):
                 logger.info(f"Created collection '{collection_name}' with cosine similarity")
 
             # Prepare data for Chroma
-            ids = [doc.id for doc in documents]
-            contents = [doc.content for doc in documents]
-            metadatas = [doc.metadata for doc in documents]
+            ids = []
+            contents = []
+            metadatas = []
+
+            from .text_splitter import split_text
+
+            for doc in documents:
+                # Split text into chunks
+                chunks = split_text(doc.content)
+                
+                for i, chunk in enumerate(chunks):
+                    # Create unique ID for chunk
+                    chunk_id = f"{doc.id}_chunk_{i}"
+                    
+                    # Create metadata for chunk
+                    chunk_metadata = doc.metadata.copy()
+                    chunk_metadata.update({
+                        "chunk_index": i,
+                        "total_chunks": len(chunks),
+                        "original_id": doc.id
+                    })
+                    
+                    ids.append(chunk_id)
+                    contents.append(chunk)
+                    metadatas.append(chunk_metadata)
+
+            if not ids:
+                logger.warning(f"No content to add to collection '{collection_name}'")
+                return
 
             # Calculate embeddings for documents
             from .embedding import get_embedding_model
             embedding_model = await get_embedding_model()
-            embeddings = await embedding_model.encode(contents)
+            
+            # Process in batches to avoid API limits
+            batch_size = 10
+            for i in range(0, len(contents), batch_size):
+                batch_ids = ids[i:i + batch_size]
+                batch_contents = contents[i:i + batch_size]
+                batch_metadatas = metadatas[i:i + batch_size]
+                
+                batch_embeddings = await embedding_model.encode(batch_contents)
 
-            # Add documents to collection with embeddings
-            collection.add(
-                documents=contents,
-                metadatas=metadatas,
-                ids=ids,
-                embeddings=embeddings
-            )
+                # Add documents to collection with embeddings
+                collection.add(
+                    documents=batch_contents,
+                    metadatas=batch_metadatas,
+                    ids=batch_ids,
+                    embeddings=batch_embeddings
+                )
 
-            logger.info(f"Added {len(documents)} documents to collection '{collection_name}'")
+            logger.info(f"Added {len(documents)} documents ({len(contents)} chunks) to collection '{collection_name}'")
 
         except Exception as e:
             logger.error(f"Failed to add documents to collection '{collection_name}': {e}")
