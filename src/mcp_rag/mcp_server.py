@@ -30,7 +30,7 @@ class MCPServer:
             return [
                 Tool(
                     name="rag_ask",
-                    description="用户想要查询的知识点或问题",
+                    description="向RAG知识库提问查询信息",
                     inputSchema={
                         "type": "object",
                         "properties": {
