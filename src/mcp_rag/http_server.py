@@ -50,6 +50,7 @@ async def _streamable_http_asgi(scope, receive, send):
 
 app.mount("/mcp", _streamable_http_asgi, name="streamable-mcp")
 app.mount("/mcp/", _streamable_http_asgi, name="streamable-mcp-slash")
+app.mount("/sse", _streamable_http_asgi, name="sse")
 
 
 @app.on_event("startup")
