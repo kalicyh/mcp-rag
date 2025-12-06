@@ -131,6 +131,12 @@ async def root():
     return RedirectResponse(url="/documents-page")
 
 
+@app.get("/doc")
+async def doc_redirect():
+    """Redirect to API documentation."""
+    return RedirectResponse(url="/docs")
+
+
 @app.get("/documents-page", response_class=HTMLResponse)
 async def documents_page():
     """Serve the documents management page."""

@@ -91,16 +91,11 @@ MCP-RAG 现在使用 JSON 文件进行持久化配置管理
 [小智go服务端](https://github.com/AnimeAIChat/xiaozhi-server-go)能通过 MCP 协议与 MCP-RAG 进行交互。以下是一个示例配置：
 ```JSON
 {
-    "mcpServers": {
-        "rag": {
-            "command": "uv",
-            "args": [
-                "run",
-                "mcp-rag",
-                "serve"
-            ]
-        }
+  "mcpServers": {
+    "RAG": {
+      "url": "http://127.0.0.1:8060/mcp"
     }
+  }
 }
 ```
 
