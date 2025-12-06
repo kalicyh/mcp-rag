@@ -4,7 +4,6 @@ import typer
 from pathlib import Path
 
 from .main import run_http_server_sync
-from .config import settings
 
 app = typer.Typer()
 
@@ -15,12 +14,6 @@ def serve():
     typer.echo("启动MCP-RAG Streamable HTTP服务器...")
     run_http_server_sync()
 
-
-@app.command()
-def web():
-    """启动 HTTP 管理界面和 Streamable HTTP 端点。"""
-    typer.echo("启动MCP-RAG HTTP服务器...")
-    run_http_server_sync()
 
 
 @app.command()

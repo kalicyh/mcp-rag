@@ -43,18 +43,11 @@ uv sync --extra local-embeddings
 uv run mcp-rag serve
 ```
 > 首次启动会报错（懒得改）  
-> 配置好配置文件就没问题了
+> 该命令同时启动 Streamable HTTP MCP 端点和管理界面，后续可以直接访问 HTTP 页面完成配置、上传与查询。  
 
-
-#### web配置页面
-
-```bash
-uv run mcp-rag web
-```
-
-- **访问配置页面**：`http://localhost:8000/config-page`
-- **访问资料管理页面**：`http://localhost:8000/documents-page`
-- **使用 HTTP API**：`http://localhost:8000/docs` (Swagger UI)
+- **访问配置页面**：`http://localhost:8000/config-page`  
+- **访问资料管理页面**：`http://localhost:8000/documents-page`  
+- **访问 Swagger API 文档**：`http://localhost:8000/docs`
 
 ### 4. 配置管理
 
@@ -105,21 +98,7 @@ MCP-RAG 现在使用 JSON 文件进行持久化配置管理
                 "run",
                 "mcp-rag",
                 "serve"
-            ],
-            "env": {
-                "PYTHONUNBUFFERED": "1",
-                "MODEL_TYPE": "OPENAI",
-
-                "OPENAI_API_KEY": "aa2ae42b-c82b-41ec-bf4e-51c8ab0e4d78",
-                "OPENAI_API_BASE": "https://ark.cn-beijing.volces.com/api/v3",
-                "OPENAI_MODEL": "doubao-1-5-pro-32k-250115",
-                "OPENAI_TEMPERATURE": "0",
-
-                "EMBEDDING_PROVIDER": "OPENAI",
-                "OPENAI_EMBEDDING_MODEL": "doubao-embedding-text-240715",
-
-                "COLLECTION_NAME": "default_collection"
-            }
+            ]
         }
     }
 }
