@@ -49,6 +49,7 @@ async def _streamable_http_asgi(scope, receive, send):
 
 
 app.mount("/mcp", _streamable_http_asgi, name="streamable-mcp")
+app.mount("/mcp/", _streamable_http_asgi, name="streamable-mcp-slash")
 
 
 @app.on_event("startup")
@@ -1359,7 +1360,7 @@ async def config_page():
             </div>
             <div class="form-group">
                 <label for="http_port">HTTP端口:</label>
-                <input type="number" id="http_port" placeholder="8000">
+                <input type="number" id="http_port" placeholder="8060">
             </div>
             <div class="form-group">
                 <div class="checkbox-group">

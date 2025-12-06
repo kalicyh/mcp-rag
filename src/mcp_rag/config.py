@@ -12,8 +12,8 @@ class Settings(BaseModel):
 
     # Server settings
     host: str = Field(default="0.0.0.0", description="服务器主机")
-    port: int = Field(default=8000, description="服务器端口")
-    http_port: int = Field(default=8000, description="HTTP API 服务器端口")
+    port: int = Field(default=8060, description="服务器端口")
+    http_port: int = Field(default=8060, description="HTTP API 服务器端口")
     debug: bool = Field(default=False, description="调试模式")
 
     # Vector database settings

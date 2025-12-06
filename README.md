@@ -45,9 +45,9 @@ uv run mcp-rag serve
 > 首次启动会报错（懒得改）  
 > 该命令同时启动 Streamable HTTP MCP 端点和管理界面，后续可以直接访问 HTTP 页面完成配置、上传与查询。  
 
-- **访问配置页面**：`http://localhost:8000/config-page`  
-- **访问资料管理页面**：`http://localhost:8000/documents-page`  
-- **访问 Swagger API 文档**：`http://localhost:8000/docs`
+- **访问配置页面**：`http://localhost:8060/config-page`  
+- **访问资料管理页面**：`http://localhost:8060/documents-page`  
+- **访问 Swagger API 文档**：`http://localhost:8060/docs`
 
 ### 4. 配置管理
 
@@ -59,8 +59,8 @@ MCP-RAG 现在使用 JSON 文件进行持久化配置管理
 ```JSON
 {
   "host": "0.0.0.0",
-  "port": 8000,
-  "http_port": 8000,
+  "port": 8060,
+  "http_port": 8060,
   "debug": false,
   "vector_db_type": "chroma",
   "chroma_persist_directory": "./data/chroma",

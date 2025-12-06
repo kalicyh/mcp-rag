@@ -28,11 +28,11 @@ async def run_http_server():
     config = uvicorn.Config(
         http_app,
         host="0.0.0.0",
-        port=settings.http_port if hasattr(settings, 'http_port') else 8000,
+        port=settings.http_port if hasattr(settings, 'http_port') else 8060,
         log_level="info"
     )
     
-    port = settings.http_port if hasattr(settings, 'http_port') else 8000
+    port = settings.http_port if hasattr(settings, 'http_port') else 8060
     print(f"\n访问地址: http://127.0.0.1:{port} (Streamable MCP endpoint: http://127.0.0.1:{port}/mcp)\n")
     
     server = uvicorn.Server(config)
