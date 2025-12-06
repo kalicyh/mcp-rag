@@ -7,6 +7,7 @@ from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
+from starlette.responses import PlainTextResponse
 import tempfile
 import shutil
 
@@ -14,6 +15,8 @@ from .config import config_manager, settings
 from .database import get_vector_database
 from .embedding import get_embedding_model
 from .document_processor import get_document_processor
+from .mcp_server import mcp_server
+from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +26,53 @@ app = FastAPI(title="MCP-RAG HTTP API", description="API for configuring MCP-RAG
 static_path = Path(__file__).parent / "static"
 static_path.mkdir(exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(static_path)), name="static")
+
+streamable_http_manager = StreamableHTTPSessionManager(
+    app=mcp_server.server,
+    json_response=False,
+    stateless=False,
+)
+
+
+async def _streamable_http_asgi(scope, receive, send):
+    if scope.get("type") != "http":
+        response = PlainTextResponse("Streamable HTTP supports only HTTP requests", status_code=405)
+        await response(scope, receive, send)
+        return
+
+    try:
+        await streamable_http_manager.handle_request(scope, receive, send)
+    except RuntimeError as err:  # pragma: no cover - defensive
+        logger.error("Streamable HTTP transport unavailable: %s", err)
+        response = PlainTextResponse("MCP transport unavailable", status_code=503)
+        await response(scope, receive, send)
+
+
+app.mount("/mcp", _streamable_http_asgi, name="streamable-mcp")
+
+
+@app.on_event("startup")
+async def _start_streamable_http_manager():
+    context = streamable_http_manager.run()
+    app.state.streamable_http_context = context
+    try:
+        await context.__aenter__()
+    except Exception:
+        logger.exception("Failed to start Streamable HTTP session manager")
+        raise
+
+
+@app.on_event("shutdown")
+async def _stop_streamable_http_manager():
+    context = getattr(app.state, "streamable_http_context", None)
+    if context is None:
+        return
+    try:
+        await context.__aexit__(None, None, None)
+    except Exception:
+        logger.exception("Error shutting down Streamable HTTP session manager")
+    finally:
+        app.state.streamable_http_context = None
 
 
 class ConfigUpdate(BaseModel):

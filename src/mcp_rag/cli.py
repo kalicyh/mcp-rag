@@ -3,7 +3,7 @@
 import typer
 from pathlib import Path
 
-from .main import run_server, run_http_server_sync, run_stdio_server_sync
+from .main import run_http_server_sync
 from .config import settings
 
 app = typer.Typer()
@@ -11,14 +11,14 @@ app = typer.Typer()
 
 @app.command()
 def serve():
-    """启动MCP-RAG MCP stdio服务器。"""
-    # 注意：不要使用 typer.echo，因为 stdout 必须只用于 MCP 协议消息
-    run_stdio_server_sync()
+    """启动每个客户端都可通过 Streamable HTTP 访问的 MCP-RAG 服务。"""
+    typer.echo("启动MCP-RAG Streamable HTTP服务器...")
+    run_http_server_sync()
 
 
 @app.command()
 def web():
-    """启动MCP-RAG HTTP服务器。"""
+    """启动 HTTP 管理界面和 Streamable HTTP 端点。"""
     typer.echo("启动MCP-RAG HTTP服务器...")
     run_http_server_sync()
 
