@@ -29,8 +29,8 @@ app.mount("/static", StaticFiles(directory=str(static_path)), name="static")
 
 streamable_http_manager = StreamableHTTPSessionManager(
     app=mcp_server.server,
-    json_response=False,
-    stateless=False,
+    json_response=True,
+    stateless=True,
 )
 
 
