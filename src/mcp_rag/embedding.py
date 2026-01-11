@@ -92,23 +92,24 @@ class SentenceTransformerModel(EmbeddingModel):
         return embeddings[0]
 
 
-class DoubaoEmbeddingModel(EmbeddingModel):
-    """Doubao (豆包) embedding model."""
+class OpenAICompatibleEmbeddingModel(EmbeddingModel):
+    """Generic OpenAI-compatible embedding model (supports Doubao, Zhipu, etc.)."""
 
-    def __init__(self, api_key: Optional[str] = None, base_url: str = "https://ark.cn-beijing.volces.com/api/v3", model: str = "doubao-embedding-text-240715"):
-        if not DOUBAO_AVAILABLE:
+    def __init__(self, api_key: Optional[str] = None, base_url: str = "https://ark.cn-beijing.volces.com/api/v3", model: str = "doubao-embedding-text-240715", dimensions: Optional[int] = None):
+        if not DOUBAO_AVAILABLE: # Keeps relying on httpx check
             raise RuntimeError("httpx not available. Please install it with: pip install httpx")
 
         self.api_key = api_key
         self.base_url = base_url.rstrip('/')
         self.model = model
+        self.dimensions = dimensions
         self.client: Optional[httpx.AsyncClient] = None
 
     async def initialize(self) -> None:
-        """Initialize the Doubao client."""
+        """Initialize the HTTP client."""
         try:
             if not self.api_key:
-                raise ValueError("API key is required for Doubao embedding")
+                raise ValueError("API key is required for embedding service")
 
             self.client = httpx.AsyncClient(
                 base_url=self.base_url,
@@ -118,10 +119,10 @@ class DoubaoEmbeddingModel(EmbeddingModel):
                 },
                 timeout=30.0
             )
-            logger.info(f"Initialized Doubao embedding model: {self.model}")
+            logger.info(f"Initialized embedding model: {self.model} at {self.base_url}")
 
         except Exception as e:
-            logger.error(f"Failed to initialize Doubao embedding model: {e}")
+            logger.error(f"Failed to initialize embedding model: {e}")
             raise
 
     async def encode(self, texts: List[str]) -> List[List[float]]:
@@ -130,24 +131,28 @@ class DoubaoEmbeddingModel(EmbeddingModel):
             raise RuntimeError("Client not initialized")
 
         try:
+            payload = {
+                "model": self.model,
+                "input": texts,
+                "encoding_format": "float"
+            }
+            if self.dimensions:
+                payload["dimensions"] = self.dimensions
+
             response = await self.client.post(
                 "/embeddings",
-                json={
-                    "model": self.model,
-                    "input": texts,
-                    "encoding_format": "float"
-                }
+                json=payload
             )
 
             if response.status_code != 200:
-                raise RuntimeError(f"Doubao API error: {response.status_code} - {response.text}")
+                raise RuntimeError(f"API error: {response.status_code} - {response.text}")
 
             data = response.json()
             embeddings = [item["embedding"] for item in data["data"]]
             return embeddings
 
         except Exception as e:
-            logger.error(f"Failed to encode texts with Doubao: {e}")
+            logger.error(f"Failed to encode texts: {e}")
             raise
 
     async def encode_single(self, text: str) -> List[float]:
@@ -161,6 +166,10 @@ class DoubaoEmbeddingModel(EmbeddingModel):
             await self.client.aclose()
 
 
+# Backward compatibility alias
+DoubaoEmbeddingModel = OpenAICompatibleEmbeddingModel
+
+
 # Global embedding model instance
 embedding_model: Optional[EmbeddingModel] = None
 
@@ -169,11 +178,24 @@ async def get_embedding_model() -> EmbeddingModel:
     """Get the global embedding model instance."""
     global embedding_model
     if embedding_model is None:
-        if settings.embedding_provider == "doubao":
-            embedding_model = DoubaoEmbeddingModel(
-                api_key=settings.embedding_api_key,
-                base_url=settings.embedding_base_url,
-                model=settings.embedding_model
+        if settings.embedding_provider in ["doubao", "zhipu", "openai"]:
+            if settings.embedding_provider not in settings.provider_configs:
+                raise ValueError(f"Provider '{settings.embedding_provider}' configuration not found in provider_configs")
+            
+            provider_config = settings.provider_configs[settings.embedding_provider]
+            base_url = provider_config.base_url
+            model = provider_config.model
+            api_key = provider_config.api_key
+            
+            if not api_key:
+                logger.warning(f"API key for {settings.embedding_provider} is not set.")
+
+            logger.info(f"Using provider config for {settings.embedding_provider}: {base_url} / {model}")
+
+            embedding_model = OpenAICompatibleEmbeddingModel(
+                api_key=api_key,
+                base_url=base_url,
+                model=model
             )
         else:
             # Local SentenceTransformer models

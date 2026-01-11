@@ -3,8 +3,15 @@
 import json
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict
 from pydantic import BaseModel, Field
+
+
+class ProviderConfig(BaseModel):
+    """Configuration for a specific model provider."""
+    base_url: str
+    model: str
+    api_key: Optional[str] = None
 
 
 class Settings(BaseModel):
@@ -22,12 +29,25 @@ class Settings(BaseModel):
     qdrant_url: str = Field(default="http://localhost:6333", description="Qdrant 服务器地址")
 
     # Embedding model settings
-    embedding_provider: str = Field(default="doubao", description="嵌入提供商")  # doubao, m3e-small, e5-small
-    embedding_model: str = Field(default="doubao-embedding-text-240715", description="嵌入模型")
+    embedding_provider: str = Field(default="zhipu", description="嵌入提供商 (doubao, zhipu, m3e-small, e5-small)")
     embedding_device: str = Field(default="cpu", description="嵌入设备")  # cpu or cuda (仅本地模型使用)
     embedding_cache_dir: Optional[str] = Field(default=None, description="嵌入缓存目录 (仅本地模型使用)")
-    embedding_api_key: Optional[str] = Field(default=None, description="嵌入API密钥 (豆包)")
-    embedding_base_url: str = Field(default="https://ark.cn-beijing.volces.com/api/v3", description="嵌入API基础地址 (豆包)")
+
+    provider_configs: Dict[str, ProviderConfig] = Field(
+        default_factory=lambda: {
+            "doubao": ProviderConfig(
+                base_url="https://ark.cn-beijing.volces.com/api/v3",
+                model="doubao-embedding-text-240715",
+                api_key=None
+            ),
+            "zhipu": ProviderConfig(
+                base_url="https://open.bigmodel.cn/api/paas/v4",
+                model="embedding-3",
+                api_key=None
+            )
+        },
+        description="各提供商的特定配置"
+    )
 
     # LLM settings for summary mode
     llm_provider: str = Field(default="doubao", description="LLM 提供商")  # ollama, doubao, chatglm

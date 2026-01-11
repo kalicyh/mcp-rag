@@ -1402,44 +1402,66 @@ async def config_page():
                 <label for="embedding_provider">嵌入提供商:</label>
                 <select id="embedding_provider">
                     <option value="doubao">豆包 (Doubao)</option>
+                    <option value="zhipu">智谱 (Zhipu)</option>
                     <option value="local">本地模型</option>
                 </select>
             </div>
-            <div class="form-group">
-                <label for="embedding_model">嵌入模型:</label>
-                <input type="text" id="embedding_model" placeholder="doubao-embedding-text-240715">
+
+            <!-- Provider Tabs -->
+            <div id="provider-tabs" class="tabs" style="margin-top: 20px; border-bottom: 1px solid #ddd; display: flex;">
+                 <div class="tab active" onclick="switchProviderTab('doubao')" id="tab-doubao" style="padding: 10px 20px; cursor: pointer; background: white; border: 1px solid #ddd; border-bottom: 1px solid white; margin-bottom: -1px; border-radius: 5px 5px 0 0;">Doubao 设置</div>
+                 <div class="tab" onclick="switchProviderTab('zhipu')" id="tab-zhipu" style="padding: 10px 20px; cursor: pointer; background: #f5f5f5; border: 1px solid #ddd; border-bottom: none; margin-bottom: -1px; border-radius: 5px 5px 0 0; margin-left: 5px;">Zhipu 设置</div>
             </div>
-            <div class="form-group">
-                <label for="embedding_api_key">豆包API密钥:</label>
-                <input type="text" id="embedding_api_key" placeholder="您的豆包API密钥">
-            </div>
-            <div class="form-group">
-                <label for="embedding_base_url">豆包API基础地址:</label>
-                <input type="text" id="embedding_base_url" placeholder="https://ark.cn-beijing.volces.com/api/v3">
-            </div>
-            <div class="form-group">
-                <label for="embedding_device">设备 (仅本地模型):</label>
-                <select id="embedding_device">
-                    <option value="cpu">CPU</option>
-                    <option value="cuda">CUDA (GPU)</option>
-                </select>
-            </div>
-            <div class="form-group">
-                <label for="embedding_cache_dir">缓存目录 (仅本地模型):</label>
-            <div class="form-group">
-                <label for="llm_api_key">API 密钥:</label>
-                <input type="text" id="llm_api_key" placeholder="可选">
-            </div>
-            <div class="form-group">
-                <div class="checkbox-group">
-                    <input type="checkbox" id="enable_llm_summary">
-                    <label for="enable_llm_summary">启用LLM总结</label>
+
+            <!-- Doubao Config -->
+            <div id="content-doubao" class="provider-content" style="padding: 20px; border: 1px solid #ddd; border-top: none;">
+                <div class="form-group">
+                    <label>Doubao API地址:</label>
+                    <input type="text" id="doubao_base_url" placeholder="https://ark.cn-beijing.volces.com/api/v3">
+                </div>
+                <div class="form-group">
+                    <label>Doubao 模型:</label>
+                    <input type="text" id="doubao_model" placeholder="doubao-embedding-text-240715">
+                </div>
+                <div class="form-group">
+                    <label>Doubao API密钥:</label>
+                    <input type="text" id="doubao_api_key" placeholder="您的豆包API密钥">
                 </div>
             </div>
-            <div class="form-group">
-                <div class="checkbox-group">
-                    <input type="checkbox" id="enable_thinking">
-                    <label for="enable_thinking">启用深度思考</label>
+
+            <!-- Zhipu Config -->
+            <div id="content-zhipu" class="provider-content" style="display: none; padding: 20px; border: 1px solid #ddd; border-top: none;">
+                <div class="form-group">
+                    <label>Zhipu API地址:</label>
+                    <input type="text" id="zhipu_base_url" placeholder="https://open.bigmodel.cn/api/paas/v4">
+                </div>
+                <div class="form-group">
+                    <label>Zhipu 模型:</label>
+                    <input type="text" id="zhipu_model" placeholder="embedding-3">
+                </div>
+                <div class="form-group">
+                    <label>Zhipu API密钥:</label>
+                    <input type="text" id="zhipu_api_key" placeholder="您的智谱API密钥">
+                </div>
+            </div>
+            <!-- LLM Settings Section -->
+            <div style="margin-top: 30px; border-top: 1px dashed #ddd; padding-top: 20px;">
+                <h3>LLM 设置 (用于总结)</h3>
+                <div class="form-group">
+                    <label for="llm_api_key">LLM API 密钥:</label>
+                    <input type="text" id="llm_api_key" placeholder="可选 (一般不用写)">
+                </div>
+                <div class="form-group">
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="enable_llm_summary">
+                        <label for="enable_llm_summary">启用LLM总结</label>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="enable_thinking">
+                        <label for="enable_thinking">启用深度思考</label>
+                    </div>
                 </div>
             </div>
         </div>
@@ -1490,6 +1512,26 @@ async def config_page():
             }, 5000);
         }
 
+        function switchProviderTab(provider) {
+            // Update tabs
+            document.querySelectorAll('.tab').forEach(el => {
+                el.classList.remove('active');
+                el.style.background = '#f5f5f5';
+                el.style.borderBottom = 'none';
+            });
+            const activeTab = document.getElementById(`tab-${provider}`);
+            if(activeTab) {
+                activeTab.classList.add('active');
+                activeTab.style.background = 'white';
+                activeTab.style.borderBottom = '1px solid white';
+            }
+
+            // Update content
+            document.querySelectorAll('.provider-content').forEach(el => el.style.display = 'none');
+            const content = document.getElementById(`content-${provider}`);
+            if(content) content.style.display = 'block';
+        }
+
         async function loadConfig() {
             try {
                 const response = await fetch(`${API_BASE}/config`);
@@ -1506,6 +1548,20 @@ async def config_page():
                         }
                     }
                 });
+                
+                // Load provider configs
+                if (config.provider_configs) {
+                    if (config.provider_configs.doubao) {
+                        document.getElementById('doubao_base_url').value = config.provider_configs.doubao.base_url || '';
+                        document.getElementById('doubao_model').value = config.provider_configs.doubao.model || '';
+                        document.getElementById('doubao_api_key').value = config.provider_configs.doubao.api_key || '';
+                    }
+                    if (config.provider_configs.zhipu) {
+                        document.getElementById('zhipu_base_url').value = config.provider_configs.zhipu.base_url || '';
+                        document.getElementById('zhipu_model').value = config.provider_configs.zhipu.model || '';
+                        document.getElementById('zhipu_api_key').value = config.provider_configs.zhipu.api_key || '';
+                    }
+                }
 
                 // Display current config
                 displayCurrentConfig(config);
@@ -1532,11 +1588,26 @@ async def config_page():
 
         async function saveAllConfig() {
             const updates = {};
+            
+            // Build provider_configs object
+            const provider_configs = {
+                doubao: {
+                    base_url: document.getElementById('doubao_base_url').value,
+                    model: document.getElementById('doubao_model').value,
+                    api_key: document.getElementById('doubao_api_key').value || null
+                },
+                zhipu: {
+                    base_url: document.getElementById('zhipu_base_url').value,
+                    model: document.getElementById('zhipu_model').value,
+                    api_key: document.getElementById('zhipu_api_key').value || null
+                }
+            };
+            updates['provider_configs'] = provider_configs;
 
-            // Collect all form values
+            // Collect all other form values
             const inputs = document.querySelectorAll('input, select');
             inputs.forEach(input => {
-                if (input.id) {
+                if (input.id && !input.id.startsWith('doubao_') && !input.id.startsWith('zhipu_')) {
                     if (input.type === 'checkbox') {
                         updates[input.id] = input.checked;
                     } else if (input.type === 'number') {

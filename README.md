@@ -65,18 +65,27 @@ MCP-RAG 现在使用 JSON 文件进行持久化配置管理
   "vector_db_type": "chroma",
   "chroma_persist_directory": "./data/chroma",
   "qdrant_url": "http://localhost:6333",
-  "embedding_provider": "doubao",
-  "embedding_model": "doubao-embedding-text-240715",
+  "embedding_provider": "zhipu",
   "embedding_device": "cpu",
   "embedding_cache_dir": null,
-  "embedding_api_key": "KEY-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-  "embedding_base_url": "https://ark.cn-beijing.volces.com/api/v3",
+  "provider_configs": {
+    "doubao": {
+      "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+      "model": "doubao-embedding-text-240715",
+      "api_key": null
+    },
+    "zhipu": {
+      "base_url": "https://open.bigmodel.cn/api/paas/v4",
+      "model": "embedding-3",
+      "api_key": null
+    }
+  },
   "llm_provider": "doubao",
-  "llm_model": "doubao-seed-1-6-flash-250828",
+  "llm_model": "doubao-seed-1.6-250615",
   "llm_base_url": "https://ark.cn-beijing.volces.com/api/v3",
-  "llm_api_key": "KEY-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "llm_api_key": null,
   "enable_llm_summary": false,
-  "enable_thinking": false,
+  "enable_thinking": true,
   "max_retrieval_results": 5,
   "similarity_threshold": 0.7,
   "enable_reranker": false,
@@ -84,7 +93,10 @@ MCP-RAG 现在使用 JSON 文件进行持久化配置管理
 }
 ```
 
-
+> 注意：
+> 
+> - 仅测试豆包与智谱的向量模型，其他模型未测试
+> - 豆包的向量模型好像要下线了，不推荐使用豆包的向量模型
 
 ### MCP 服务器配置
 
