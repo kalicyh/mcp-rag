@@ -4,6 +4,7 @@ import logging
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
+import re
 
 import chromadb
 from chromadb.config import Settings as ChromaSettings
@@ -38,7 +39,7 @@ class VectorDatabase(ABC):
         pass
 
     @abstractmethod
-    async def add_document(self, content: str, collection_name: str = "default", metadata: Dict[str, Any] = None) -> None:
+    async def add_document(self, content: str, collection_name: str = "default", metadata: Dict[str, Any] = None, user_id: Optional[int] = None, agent_id: Optional[int] = None) -> None:
         """Add a single document to the collection."""
         pass
 
@@ -48,33 +49,35 @@ class VectorDatabase(ABC):
         query_embedding: List[float],
         collection_name: str = "default",
         limit: int = 5,
-        threshold: float = 0.7
+        threshold: float = 0.7,
+        user_id: Optional[int] = None, 
+        agent_id: Optional[int] = None
     ) -> List[SearchResult]:
         """Search for similar documents."""
         pass
 
     @abstractmethod
-    async def delete_collection(self, collection_name: str = "default") -> None:
+    async def delete_collection(self, collection_name: str = "default", user_id: Optional[int] = None, agent_id: Optional[int] = None) -> None:
         """Delete a collection."""
         pass
 
     @abstractmethod
-    async def list_collections(self) -> List[str]:
+    async def list_collections(self, user_id: Optional[int] = None, agent_id: Optional[int] = None) -> List[str]:
         """List all collections."""
         pass
 
     @abstractmethod
-    async def list_documents(self, collection_name: str = "default", limit: int = 100, offset: int = 0, filename: Optional[str] = None) -> Dict[str, Any]:
+    async def list_documents(self, collection_name: str = "default", limit: int = 100, offset: int = 0, filename: Optional[str] = None, user_id: Optional[int] = None, agent_id: Optional[int] = None) -> Dict[str, Any]:
         """List documents in a collection."""
         pass
 
     @abstractmethod
-    async def delete_document(self, document_id: str, collection_name: str = "default") -> bool:
+    async def delete_document(self, document_id: str, collection_name: str = "default", user_id: Optional[int] = None, agent_id: Optional[int] = None) -> bool:
         """Delete a document from a collection."""
         pass
 
     @abstractmethod
-    async def list_files(self, collection_name: str = "default") -> List[Dict[str, Any]]:
+    async def list_files(self, collection_name: str = "default", user_id: Optional[int] = None, agent_id: Optional[int] = None) -> List[Dict[str, Any]]:
         """List all files in a collection."""
         pass
 
@@ -109,14 +112,54 @@ class VectorDatabase(ABC):
             
             if ids_to_delete:
                 collection.delete(ids=ids_to_delete)
-                logger.info(f"Deleted {len(ids_to_delete)} chunks for file '{filename}' from '{collection_name}'")
+                logger.info(f"Deleted {len(ids_to_delete)} chunks for file '{filename}' from '{actual_collection_name}'")
             else:
-                logger.warning(f"No chunks found for file '{filename}' in '{collection_name}'")
+                logger.warning(f"No chunks found for file '{filename}' in '{actual_collection_name}'")
             
             return True
         except Exception as e:
-            logger.error(f"Failed to delete file '{filename}' from '{collection_name}': {e}")
+            logger.error(f"Failed to delete file '{filename}' from '{actual_collection_name}': {e}")
             return False
+
+    def _get_collection_name(self, base_name: str, user_id: Optional[int], agent_id: Optional[int]) -> str:
+        """
+        Generate collection name based on user_id and agent_id.
+        Format: u{user_id}_a{agent_id}_{base_name} or u{user_id}_{base_name} or {base_name}
+        """
+        if user_id is not None:
+            if agent_id is not None:
+                return f"u{user_id}_a{agent_id}_{base_name}"
+            return f"u{user_id}_{base_name}"
+        return base_name
+
+    def _parse_collection_name(self, actual_name: str) -> Dict[str, Any]:
+        """
+        Parse actual collection name to extract user_id, agent_id and original name.
+        Returns: {"user_id": int|None, "agent_id": int|None, "base_name": str}
+        """
+        # Regex for u{uid}_a{aid}_{name}
+        ua_match = re.match(r"^u(\d+)_a(\d+)_(.+)$", actual_name)
+        if ua_match:
+            return {
+                "user_id": int(ua_match.group(1)),
+                "agent_id": int(ua_match.group(2)),
+                "base_name": ua_match.group(3)
+            }
+        
+        # Regex for u{uid}_{name}
+        u_match = re.match(r"^u(\d+)_(.+)$", actual_name)
+        if u_match:
+            return {
+                "user_id": int(u_match.group(1)),
+                "agent_id": None,
+                "base_name": u_match.group(2)
+            }
+            
+        return {
+            "user_id": None,
+            "agent_id": None,
+            "base_name": actual_name
+        }
 
 class ChromaDatabase(VectorDatabase):
     """Chroma vector database implementation."""
@@ -173,7 +216,7 @@ class ChromaDatabase(VectorDatabase):
             logger.error(f"Failed to ensure default collection: {e}")
             # Don't raise here as this is not critical for initialization
 
-    async def add_document(self, content: str, collection_name: str = "default", metadata: Dict[str, Any] = None) -> None:
+    async def add_document(self, content: str, collection_name: str = "default", metadata: Dict[str, Any] = None, user_id: Optional[int] = None, agent_id: Optional[int] = None) -> None:
         """Add a single document to Chroma collection."""
         if metadata is None:
             metadata = {}
@@ -200,34 +243,37 @@ class ChromaDatabase(VectorDatabase):
             metadata=metadata
         )
 
-        await self.add_documents([document], collection_name)
+        await self.add_documents([document], collection_name, user_id, agent_id)
 
-    async def add_documents(self, documents: List[Document], collection_name: str = "default") -> None:
+    async def add_documents(self, documents: List[Document], collection_name: str = "default", user_id: Optional[int] = None, agent_id: Optional[int] = None) -> None:
         """Add multiple documents to Chroma collection."""
         if not self.client:
             raise RuntimeError("Database not initialized")
 
+        # Resolve actual collection name
+        actual_collection_name = self._get_collection_name(collection_name, user_id, agent_id)
+
         try:
             # Get or create collection
             try:
-                collection = self.client.get_collection(name=collection_name)
+                collection = self.client.get_collection(name=actual_collection_name)
                 # Check if collection uses the correct distance metric
                 current_space = collection.metadata.get("hnsw:space") if collection.metadata else None
                 if current_space != "cosine":
-                    logger.warning(f"Collection '{collection_name}' uses distance metric '{current_space}'. Recreating with cosine.")
-                    self.client.delete_collection(name=collection_name)
+                    logger.warning(f"Collection '{actual_collection_name}' uses distance metric '{current_space}'. Recreating with cosine.")
+                    self.client.delete_collection(name=actual_collection_name)
                     collection = self.client.create_collection(
-                        name=collection_name,
+                        name=actual_collection_name,
                         metadata={"hnsw:space": "cosine"}
                     )
-                    logger.info(f"Recreated collection '{collection_name}' with cosine similarity")
+                    logger.info(f"Recreated collection '{actual_collection_name}' with cosine similarity")
             except Exception:
                 # Collection doesn't exist, create it with cosine similarity
                 collection = self.client.create_collection(
-                    name=collection_name,
+                    name=actual_collection_name,
                     metadata={"hnsw:space": "cosine"}
                 )
-                logger.info(f"Created collection '{collection_name}' with cosine similarity")
+                logger.info(f"Created collection '{actual_collection_name}' with cosine similarity")
 
             # Prepare data for Chroma
             ids = []
@@ -257,7 +303,7 @@ class ChromaDatabase(VectorDatabase):
                     metadatas.append(chunk_metadata)
 
             if not ids:
-                logger.warning(f"No content to add to collection '{collection_name}'")
+                logger.warning(f"No content to add to collection '{actual_collection_name}'")
                 return
 
             # Calculate embeddings for documents
@@ -281,10 +327,10 @@ class ChromaDatabase(VectorDatabase):
                     embeddings=batch_embeddings
                 )
 
-            logger.info(f"Added {len(documents)} documents ({len(contents)} chunks) to collection '{collection_name}'")
+            logger.info(f"Added {len(documents)} documents ({len(contents)} chunks) to collection '{actual_collection_name}'")
 
         except Exception as e:
-            logger.error(f"Failed to add documents to collection '{collection_name}': {e}")
+            logger.error(f"Failed to add documents to collection '{actual_collection_name}': {e}")
             raise
 
     async def search(
@@ -292,16 +338,21 @@ class ChromaDatabase(VectorDatabase):
         query_embedding: List[float],
         collection_name: str = "default",
         limit: int = 5,
-        threshold: float = 0.7
+        threshold: float = 0.7,
+        user_id: Optional[int] = None, 
+        agent_id: Optional[int] = None
     ) -> List[SearchResult]:
         """Search Chroma collection using built-in vector search."""
         if not self.client:
             raise RuntimeError("Database not initialized")
 
+        # Resolve actual collection name
+        actual_collection_name = self._get_collection_name(collection_name, user_id, agent_id)
+
         try:
-            collection = self.client.get_collection(name=collection_name)
+            collection = self.client.get_collection(name=actual_collection_name)
             if not collection:
-                logger.warning(f"Collection '{collection_name}' not found")
+                logger.warning(f"Collection '{actual_collection_name}' not found")
                 return []
 
             # Use ChromaDB's built-in vector search
@@ -335,42 +386,72 @@ class ChromaDatabase(VectorDatabase):
             return search_results
 
         except Exception as e:
-            logger.error(f"Failed to search collection '{collection_name}': {e}")
+            logger.error(f"Failed to search collection '{actual_collection_name}': {e}")
             raise
 
-    async def delete_collection(self, collection_name: str = "default") -> None:
+    async def delete_collection(self, collection_name: str = "default", user_id: Optional[int] = None, agent_id: Optional[int] = None) -> None:
         """Delete Chroma collection."""
         if not self.client:
             raise RuntimeError("Database not initialized")
 
+        # Resolve actual collection name
+        actual_collection_name = self._get_collection_name(collection_name, user_id, agent_id)
+
         try:
-            self.client.delete_collection(name=collection_name)
-            if collection_name in self.collections:
-                del self.collections[collection_name]
-            logger.info(f"Deleted collection '{collection_name}'")
+            self.client.delete_collection(name=actual_collection_name)
+            if actual_collection_name in self.collections:
+                del self.collections[actual_collection_name]
+            logger.info(f"Deleted collection '{actual_collection_name}'")
         except Exception as e:
-            logger.error(f"Failed to delete collection '{collection_name}': {e}")
+            logger.error(f"Failed to delete collection '{actual_collection_name}': {e}")
             raise
 
-    async def list_collections(self) -> List[str]:
+    async def list_collections(self, user_id: Optional[int] = None, agent_id: Optional[int] = None) -> List[str]:
         """List all Chroma collections."""
         if not self.client:
             raise RuntimeError("Database not initialized")
 
         try:
             collections = self.client.list_collections()
-            return [col.name for col in collections]
+            all_collections = [col.name for col in collections]
+            
+            # Filter and map back to base names if filtering is needed/desired
+            # For now, we return full names or filtered list if user_id is provided
+            
+            if user_id is None:
+                 return all_collections
+                 
+            filtered = []
+            for col_name in all_collections:
+                info = self._parse_collection_name(col_name)
+                
+                # If specific user requested, only show their collections
+                if user_id is not None:
+                    if info["user_id"] != user_id:
+                        continue
+                        
+                    # If specific agent requested, further filter
+                    if agent_id is not None and info["agent_id"] != agent_id:
+                        continue
+                
+                filtered.append(col_name)
+                
+            return filtered
+            
         except Exception as e:
             logger.error(f"Failed to list collections: {e}")
             raise
 
-    async def list_documents(self, collection_name: str = "default", limit: int = 100, offset: int = 0, filename: Optional[str] = None) -> Dict[str, Any]:
+    async def list_documents(self, collection_name: str = "default", limit: int = 100, offset: int = 0, filename: Optional[str] = None, user_id: Optional[int] = None, agent_id: Optional[int] = None) -> Dict[str, Any]:
         """List documents in a Chroma collection."""
         if not self.client:
             raise RuntimeError("Database not initialized")
 
+        # Resolve actual collection name
+        actual_collection_name = self._get_collection_name(collection_name, user_id, agent_id)
+
         try:
-            collection = self.client.get_collection(name=collection_name)
+            collection = self.client.get_collection(name=actual_collection_name)
             # Get all documents with metadata
             where_clause = {"filename": filename} if filename else None
             result = collection.get(
@@ -400,31 +481,37 @@ class ChromaDatabase(VectorDatabase):
                 "offset": offset
             }
         except Exception as e:
-            logger.error(f"Failed to list documents in '{collection_name}': {e}")
+            logger.error(f"Failed to list documents in '{actual_collection_name}': {e}")
             # Return empty result if collection doesn't exist or other error
             return {"total": 0, "documents": [], "limit": limit, "offset": offset}
 
-    async def delete_document(self, document_id: str, collection_name: str = "default") -> bool:
+    async def delete_document(self, document_id: str, collection_name: str = "default", user_id: Optional[int] = None, agent_id: Optional[int] = None) -> bool:
         """Delete a document from a Chroma collection."""
         if not self.client:
             raise RuntimeError("Database not initialized")
 
+        # Resolve actual collection name
+        actual_collection_name = self._get_collection_name(collection_name, user_id, agent_id)
+
         try:
-            collection = self.client.get_collection(name=collection_name)
+            collection = self.client.get_collection(name=actual_collection_name)
             collection.delete(ids=[document_id])
-            logger.info(f"Deleted document '{document_id}' from '{collection_name}'")
+            logger.info(f"Deleted document '{document_id}' from '{actual_collection_name}'")
             return True
         except Exception as e:
-            logger.error(f"Failed to delete document '{document_id}' from '{collection_name}': {e}")
+            logger.error(f"Failed to delete document '{document_id}' from '{actual_collection_name}': {e}")
             return False
 
-    async def list_files(self, collection_name: str = "default") -> List[Dict[str, Any]]:
+    async def list_files(self, collection_name: str = "default", user_id: Optional[int] = None, agent_id: Optional[int] = None) -> List[Dict[str, Any]]:
         """List all files in a Chroma collection."""
         if not self.client:
             raise RuntimeError("Database not initialized")
 
+        # Resolve actual collection name
+        actual_collection_name = self._get_collection_name(collection_name, user_id, agent_id)
+
         try:
-            collection = self.client.get_collection(name=collection_name)
+            collection = self.client.get_collection(name=actual_collection_name)
             # Get all metadatas and IDs
             result = collection.get(include=["metadatas"])
             
@@ -463,7 +550,7 @@ class ChromaDatabase(VectorDatabase):
 
             return list(files.values())
         except Exception as e:
-            logger.error(f"Failed to list files in '{collection_name}': {e}")
+            logger.error(f"Failed to list files in '{actual_collection_name}': {e}")
             return []
 
     async def delete_file(self, filename: str, collection_name: str = "default") -> bool:

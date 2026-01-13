@@ -87,6 +87,11 @@ class MCPServer:
                     limit = arguments.get("limit", 5)
                     threshold = arguments.get("threshold", 0.7)
 
+                    _user_id = arguments.get("_user_id")
+                    _agent_id = arguments.get("_agent_id")
+                    if _user_id:
+                        logger.info(f"RAG Request from User: {_user_id}, Agent: {_agent_id}")
+
                     logger.info(f"编码查询: {query}")
                     # 编码查询
                     query_embedding = await embedding_model.encode_single(query)
@@ -97,7 +102,9 @@ class MCPServer:
                         query_embedding=query_embedding,
                         collection_name=collection,
                         limit=limit,
-                        threshold=threshold
+                        threshold=threshold,
+                        user_id=_user_id,
+                        agent_id=_agent_id
                     )
 
                     # 格式化结果

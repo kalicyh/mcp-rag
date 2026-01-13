@@ -93,6 +93,8 @@ class DocumentAdd(BaseModel):
     content: str
     collection: str = "default"
     metadata: Dict[str, Any] = {}
+    user_id: Optional[int] = None
+    agent_id: Optional[int] = None
 
 
 class FileUploadResponse(BaseModel):
@@ -117,12 +119,16 @@ class DeleteDocumentRequest(BaseModel):
     """Delete document request model."""
     document_id: str
     collection: str = "default"
+    user_id: Optional[int] = None
+    agent_id: Optional[int] = None
 
 
 class DeleteFileRequest(BaseModel):
     """Delete file request model."""
     filename: str
     collection: str = "default"
+    user_id: Optional[int] = None
+    agent_id: Optional[int] = None
 
 
 @app.get("/")
@@ -366,6 +372,24 @@ async def documents_page():
             <a href="/documents-page" style="margin: 0 10px; color: #007acc; text-decoration: none;">资料管理</a>
         </div>
         <h1>MCP-RAG 资料管理</h1>
+
+        <!-- Auth Context Settings for Testing -->
+        <div class="section" style="background: #e3f2fd; border-color: #2196f3;">
+            <h2 style="border-bottom-color: #2196f3; color: #0d47a1; font-size: 1.2em;">鉴权模拟 (用于测试)</h2>
+            <div style="display: flex; gap: 20px;">
+                <div style="flex: 1;">
+                    <label for="authUserId">用户 ID (User ID):</label>
+                    <input type="number" id="authUserId" placeholder="例如: 1001" style="width: 100%;">
+                </div>
+                <div style="flex: 1;">
+                    <label for="authAgentId">智能体 ID (Agent ID):</label>
+                    <input type="number" id="authAgentId" placeholder="例如: 50" style="width: 100%;">
+                </div>
+            </div>
+            <div style="margin-top: 10px; font-size: 0.9em; color: #666;">
+                *在此处设置的 ID 将应用于后续的上传、搜索和管理操作，模拟 MCP 协议注入的参数。留空则表示无身份 (Legacy/Default)。
+            </div>
+        </div>
 
         <div class="tabs">
             <div class="tab active" onclick="switchTab('upload')">资料上传</div>
@@ -625,7 +649,14 @@ async def documents_page():
             uploadedFiles.forEach(file => {
                 formData.append('files', file);
             });
+            formData.append('files', file);
+            });
             formData.append('collection', collection);
+            
+            const userId = document.getElementById('authUserId').value;
+            const agentId = document.getElementById('authAgentId').value;
+            if (userId) formData.append('user_id', userId);
+            if (agentId) formData.append('agent_id', agentId);
 
             try {
                 const response = await fetch(`${API_BASE}/upload-files`, {
@@ -707,7 +738,13 @@ async def documents_page():
             }
 
             try {
-                const response = await fetch(`${API_BASE}/search?query=${encodeURIComponent(query)}&collection=${collection}&limit=10`);
+                const userId = document.getElementById('authUserId').value;
+                const agentId = document.getElementById('authAgentId').value;
+                let url = `${API_BASE}/search?query=${encodeURIComponent(query)}&collection=${collection}&limit=10`;
+                if (userId) url += `&user_id=${userId}`;
+                if (agentId) url += `&agent_id=${agentId}`;
+                
+                const response = await fetch(url);
                 const data = await response.json();
 
                 const resultsDiv = document.getElementById('searchResults');
@@ -776,8 +813,12 @@ async def documents_page():
                     },
                     body: JSON.stringify({
                         content: content,
+                    body: JSON.stringify({
+                        content: content,
                         collection: collection,
-                        metadata: metadata
+                        metadata: metadata,
+                        user_id: document.getElementById('authUserId').value ? parseInt(document.getElementById('authUserId').value) : null,
+                        agent_id: document.getElementById('authAgentId').value ? parseInt(document.getElementById('authAgentId').value) : null
                     })
                 });
 
@@ -944,7 +985,13 @@ async def documents_page():
             listDiv.innerHTML = '<div style="text-align: center; padding: 20px;">加载中...</div>';
 
             try {
-                const response = await fetch(`${API_BASE}/list-files?collection=${collection}`);
+                const userId = document.getElementById('authUserId').value;
+                const agentId = document.getElementById('authAgentId').value;
+                let url = `${API_BASE}/list-files?collection=${collection}`;
+                if (userId) url += `&user_id=${userId}`;
+                if (agentId) url += `&agent_id=${agentId}`;
+                
+                const response = await fetch(url);
                 const data = await response.json();
                 
                 listDiv.innerHTML = '';
@@ -1005,7 +1052,9 @@ async def documents_page():
                     },
                     body: JSON.stringify({
                         filename: filename,
-                        collection: collection
+                        collection: collection,
+                        user_id: document.getElementById('authUserId').value ? parseInt(document.getElementById('authUserId').value) : null,
+                        agent_id: document.getElementById('authAgentId').value ? parseInt(document.getElementById('authAgentId').value) : null
                     })
                 });
 
@@ -1063,7 +1112,14 @@ async def documents_page():
             try {
                 // Add filename parameter if filtering by file
                 const filenameParam = currentFileFilter ? `&filename=${encodeURIComponent(currentFileFilter)}` : '';
-                const response = await fetch(`${API_BASE}/list-documents?collection=${collection}&limit=${pageSize}&offset=${page * pageSize}${filenameParam}`);
+                
+                const userId = document.getElementById('authUserId').value;
+                const agentId = document.getElementById('authAgentId').value;
+                let url = `${API_BASE}/list-documents?collection=${collection}&limit=${pageSize}&offset=${page * pageSize}${filenameParam}`;
+                if (userId) url += `&user_id=${userId}`;
+                if (agentId) url += `&agent_id=${agentId}`;
+                
+                const response = await fetch(url);
                 if (!response.ok) throw new Error('Failed to load documents');
                 
                 const data = await response.json();
@@ -1121,7 +1177,9 @@ async def documents_page():
                     },
                     body: JSON.stringify({
                         document_id: docId,
-                        collection: collection
+                        collection: collection,
+                        user_id: document.getElementById('authUserId').value ? parseInt(document.getElementById('authUserId').value) : null,
+                        agent_id: document.getElementById('authAgentId').value ? parseInt(document.getElementById('authAgentId').value) : null
                     })
                 });
                 
