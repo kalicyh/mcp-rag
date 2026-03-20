@@ -23,6 +23,16 @@ class _FakeProviderConfig:
 
 
 @dataclass
+class _FakeQuotas:
+    max_upload_files: int = 100
+    max_upload_bytes: int = 10_000_000
+    max_upload_file_bytes: int = 10_000_000
+    max_index_documents: int = 100
+    max_index_chunks: int = 1000
+    max_index_chars: int = 10_000_000
+
+
+@dataclass
 class _FakeSettings:
     chroma_persist_directory: str = "./data/chroma"
     embedding_provider: str = "zhipu"
@@ -32,10 +42,13 @@ class _FakeSettings:
     enable_llm_summary: bool = True
     max_retrieval_results: int = 5
     enable_reranker: bool = False
+    quotas: _FakeQuotas | None = None
 
     def __post_init__(self):
         if self.provider_configs is None:
             self.provider_configs = {"zhipu": _FakeProviderConfig()}
+        if self.quotas is None:
+            self.quotas = _FakeQuotas()
 
 
 @dataclass

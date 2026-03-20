@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from mcp_rag.contracts import ChatRequest, DocumentRequest, SearchRequest, SearchResultView, TenantSpec
+from mcp_rag.security import QuotaExceededError
 from mcp_rag.services import ChatService, IndexingService, RetrievalService, ServiceRuntime
 
 
@@ -14,6 +15,16 @@ class _FakeProviderConfig:
     base_url: str = "https://example.com/v1"
     model: str = "fake-model"
     api_key: str | None = "fake-key"
+
+
+@dataclass
+class _FakeQuotas:
+    max_upload_files: int = 100
+    max_upload_bytes: int = 10_000_000
+    max_upload_file_bytes: int = 10_000_000
+    max_index_documents: int = 100
+    max_index_chunks: int = 1000
+    max_index_chars: int = 10_000_000
 
 
 @dataclass
@@ -26,10 +37,13 @@ class _FakeSettings:
     enable_llm_summary: bool = True
     max_retrieval_results: int = 5
     enable_reranker: bool = False
+    quotas: _FakeQuotas | None = None
 
     def __post_init__(self):
         if self.provider_configs is None:
             self.provider_configs = {"zhipu": _FakeProviderConfig()}
+        if self.quotas is None:
+            self.quotas = _FakeQuotas()
 
 
 @dataclass
@@ -358,6 +372,51 @@ class IndexingServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(chunks[0].source, "sample.txt")
         self.assertEqual(chunks[0].metadata["source"], "sample.txt")
         self.assertEqual(chunks[0].metadata["filename"], "sample.txt")
+
+    async def test_add_document_enforces_index_quota(self):
+        limited_runtime = ServiceRuntime(
+            settings_obj=_FakeSettings(quotas=_FakeQuotas(max_index_documents=1, max_index_chunks=0, max_index_chars=10)),
+            document_processor=self.processor,
+            embedding_model=self.embedding,
+            vector_store=self.vector_store,
+            hybrid_service=self.hybrid,
+        )
+        limited_service = IndexingService(limited_runtime)
+
+        with self.assertRaises(QuotaExceededError):
+            await limited_service.add_document(
+                DocumentRequest(
+                    content="alpha beta gamma",
+                    collection="docs",
+                    metadata={"title": "Intro"},
+                    tenant=TenantSpec(base_collection="docs", user_id=7, agent_id=2),
+                )
+            )
+
+    async def test_upload_files_marks_batch_failed_when_upload_quota_is_exceeded(self):
+        limited_runtime = ServiceRuntime(
+            settings_obj=_FakeSettings(quotas=_FakeQuotas(max_upload_files=1, max_upload_bytes=4, max_upload_file_bytes=4)),
+            document_processor=self.processor,
+            embedding_model=self.embedding,
+            vector_store=self.vector_store,
+            hybrid_service=self.hybrid,
+        )
+        limited_service = IndexingService(limited_runtime)
+
+        class _Upload:
+            def __init__(self, filename: str, content: bytes):
+                self.filename = filename
+                self.file = io.BytesIO(content)
+
+        payload = await limited_service.upload_files(
+            [_Upload("sample.txt", b"file content")],
+            collection="docs",
+            tenant=TenantSpec(base_collection="docs", user_id=7),
+        )
+
+        self.assertEqual(payload["successful"], 0)
+        self.assertEqual(payload["failed"], 1)
+        self.assertIn("file too large", payload["results"][0]["error"])
 
     async def test_management_calls_are_tenant_aware(self):
         docs = await self.service.list_documents(
