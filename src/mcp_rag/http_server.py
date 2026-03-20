@@ -13,7 +13,8 @@ from .config import config_manager
 from .contracts import ChatRequest, DocumentRequest, SearchRequest, normalize_tenant
 from .shell_factory import (
     create_http_app,
-    enforce_request_guards,
+    enforce_http_guardrails,
+    get_default_shell_context,
     health_payload,
     metrics_payload,
     ready_payload,
@@ -22,22 +23,32 @@ from .shell_factory import (
     resolve_shell_service,
 )
 from .mcp_server import mcp_server
+from .security import QuotaExceededError
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 
 logger = logging.getLogger(__name__)
 
-app = create_http_app()
+app = create_http_app(context=get_default_shell_context())
 
 # Mount static files
 static_path = Path(__file__).parent / "static"
 static_path.mkdir(exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(static_path)), name="static")
 
-streamable_http_manager = StreamableHTTPSessionManager(
-    app=mcp_server.server,
-    json_response=True,
-    stateless=True,
-)
+def _build_streamable_http_manager() -> StreamableHTTPSessionManager:
+    return StreamableHTTPSessionManager(
+        app=mcp_server.server,
+        json_response=True,
+        stateless=True,
+    )
+
+
+def _get_streamable_http_manager() -> StreamableHTTPSessionManager:
+    manager = getattr(app.state, "streamable_http_manager", None)
+    if manager is None:
+        manager = _build_streamable_http_manager()
+        app.state.streamable_http_manager = manager
+    return manager
 
 
 async def _streamable_http_asgi(scope, receive, send):
@@ -47,7 +58,7 @@ async def _streamable_http_asgi(scope, receive, send):
         return
 
     try:
-        await streamable_http_manager.handle_request(scope, receive, send)
+        await _get_streamable_http_manager().handle_request(scope, receive, send)
     except RuntimeError as err:  # pragma: no cover - defensive
         logger.error("Streamable HTTP transport unavailable: %s", err)
         response = PlainTextResponse("MCP transport unavailable", status_code=503)
@@ -68,7 +79,9 @@ async def get_rag_service(request: Request):
 @app.on_event("startup")
 async def _start_streamable_http_manager():
     app.state.shell_context.bootstrapped = True
-    context = streamable_http_manager.run()
+    manager = _build_streamable_http_manager()
+    app.state.streamable_http_manager = manager
+    context = manager.run()
     app.state.streamable_http_context = context
     try:
         await context.__aenter__()
@@ -79,15 +92,8 @@ async def _start_streamable_http_manager():
 
 @app.on_event("shutdown")
 async def _stop_streamable_http_manager():
-    context = getattr(app.state, "streamable_http_context", None)
-    if context is None:
-        return
-    try:
-        await context.__aexit__(None, None, None)
-    except Exception:
-        logger.exception("Error shutting down Streamable HTTP session manager")
-    finally:
-        app.state.streamable_http_context = None
+    app.state.streamable_http_context = None
+    app.state.streamable_http_manager = None
 
 
 class ConfigUpdate(BaseModel):
@@ -108,6 +114,7 @@ class DocumentAdd(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict)
     user_id: Optional[int] = None
     agent_id: Optional[int] = None
+    api_key: Optional[str] = None
 
 
 class DeleteDocumentRequest(BaseModel):
@@ -116,6 +123,7 @@ class DeleteDocumentRequest(BaseModel):
     collection: str = "default"
     user_id: Optional[int] = None
     agent_id: Optional[int] = None
+    api_key: Optional[str] = None
 
 
 class DeleteFileRequest(BaseModel):
@@ -124,6 +132,7 @@ class DeleteFileRequest(BaseModel):
     collection: str = "default"
     user_id: Optional[int] = None
     agent_id: Optional[int] = None
+    api_key: Optional[str] = None
 
 
 @app.get("/")
@@ -1742,61 +1751,78 @@ async def config_page():
 
 
 @app.get("/config")
-async def get_config():
+async def get_config(request: Request, api_key: Optional[str] = None):
     """Get current configuration."""
-    return config_manager.get_all_settings()
+    context = request.app.state.shell_context
+    async with context.observability.timer("config.get"):
+        enforce_http_guardrails(request, subject="config", api_key=api_key)
+        return config_manager.get_all_settings()
 
 
 @app.post("/config")
-async def update_config(config: ConfigUpdate):
+async def update_config(config: ConfigUpdate, request: Request):
     """Update a single configuration setting."""
-    success = config_manager.update_setting(config.key, config.value)
-    if not success:
-        raise HTTPException(status_code=400, detail=f"Failed to update config {config.key}")
-    return {"message": f"Config {config.key} updated successfully"}
+    context = request.app.state.shell_context
+    async with context.observability.timer("config.update"):
+        enforce_http_guardrails(request, subject="config")
+        success = config_manager.update_setting(config.key, config.value)
+        if not success:
+            raise HTTPException(status_code=400, detail=f"Failed to update config {config.key}")
+        return {"message": f"Config {config.key} updated successfully"}
 
 
 @app.post("/config/bulk")
-async def update_config_bulk(config: BulkConfigUpdate):
+async def update_config_bulk(config: BulkConfigUpdate, request: Request):
     """Update multiple configuration settings."""
-    success = config_manager.update_settings(config.updates)
-    if not success:
-        raise HTTPException(status_code=400, detail="Failed to update config")
-    return {"message": "Config updated successfully"}
+    context = request.app.state.shell_context
+    async with context.observability.timer("config.bulk_update"):
+        enforce_http_guardrails(request, subject="config")
+        success = config_manager.update_settings(config.updates)
+        if not success:
+            raise HTTPException(status_code=400, detail="Failed to update config")
+        return {"message": "Config updated successfully"}
 
 
 @app.post("/config/reset")
-async def reset_config():
+async def reset_config(request: Request):
     """Reset configuration to defaults."""
-    success = config_manager.reset_to_defaults()
-    if not success:
-        raise HTTPException(status_code=400, detail="Failed to reset config")
-    return {"message": "Config reset to defaults successfully"}
+    context = request.app.state.shell_context
+    async with context.observability.timer("config.reset"):
+        enforce_http_guardrails(request, subject="config")
+        success = config_manager.reset_to_defaults()
+        if not success:
+            raise HTTPException(status_code=400, detail="Failed to reset config")
+        return {"message": "Config reset to defaults successfully"}
 
 
 @app.post("/add-document")
 async def add_document(doc: DocumentAdd, request: Request):
     """Add a single document."""
     try:
-        service = await resolve_shell_service(request)
         tenant = normalize_tenant(
             base_collection=doc.collection,
             user_id=doc.user_id,
             agent_id=doc.agent_id,
         )
-        return await service.add_document(
-            DocumentRequest(
-                content=doc.content,
-                collection=doc.collection,
-                metadata=doc.metadata,
+        context = request.app.state.shell_context
+        async with context.observability.timer("add_document"):
+            enforce_http_guardrails(
+                request,
                 tenant=tenant,
+                subject=request_subject(request, tenant, fallback="documents"),
+                api_key=doc.api_key,
             )
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to add document: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+            service = await get_rag_service(request)
+            return await service.add_document(
+                DocumentRequest(
+                    content=doc.content,
+                    collection=doc.collection,
+                    metadata=doc.metadata,
+                    tenant=tenant,
+                )
+            )
+    except QuotaExceededError as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
 
 
 @app.post("/upload-files")
@@ -1806,58 +1832,80 @@ async def upload_files(
     collection: str = Form("default"),
     user_id: Optional[int] = Form(None),
     agent_id: Optional[int] = Form(None),
+    api_key: Optional[str] = Form(None),
 ):
     """Upload and process multiple files."""
     if not files:
         raise HTTPException(status_code=400, detail="No files provided")
 
-    service = await resolve_shell_service(request)
     tenant = normalize_tenant(
         base_collection=collection,
         user_id=user_id,
         agent_id=agent_id,
     )
-    return await service.upload_files(files, collection=collection, tenant=tenant)
+    context = request.app.state.shell_context
+    async with context.observability.timer("upload_files"):
+        enforce_http_guardrails(
+            request,
+            tenant=tenant,
+            subject=request_subject(request, tenant, fallback=f"upload:{collection}"),
+            api_key=api_key,
+        )
+        service = await get_rag_service(request)
+        return await service.upload_files(files, collection=collection, tenant=tenant)
 
 
 @app.get("/collections")
-async def list_collections(request: Request, user_id: Optional[int] = None, agent_id: Optional[int] = None):
+async def list_collections(
+    request: Request,
+    user_id: Optional[int] = None,
+    agent_id: Optional[int] = None,
+    api_key: Optional[str] = None,
+):
     """List all collections."""
-    try:
-        service = await resolve_shell_service(request)
-        collections = await service.list_collections(
-            tenant=normalize_tenant(
-                base_collection="default",
-                user_id=user_id,
-                agent_id=agent_id,
-            )
+    tenant = normalize_tenant(
+        base_collection="default",
+        user_id=user_id,
+        agent_id=agent_id,
+    )
+    context = request.app.state.shell_context
+    async with context.observability.timer("list_collections"):
+        enforce_http_guardrails(
+            request,
+            tenant=tenant,
+            subject=request_subject(request, tenant, fallback="collections"),
+            api_key=api_key,
         )
-        return {"collections": collections}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to list collections: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        service = await get_rag_service(request)
+        collections = await service.list_collections(tenant=tenant)
+    return {"collections": collections}
 
 
 @app.post("/chat")
 async def chat_with_knowledge_base(chat_request: dict, request: Request):
     """Chat with knowledge base using LLM."""
-    try:
-        query = chat_request.get("query", "")
-        collection = chat_request.get("collection", "default")
-        limit = int(chat_request.get("limit", 5) or 5)
-        tenant = normalize_tenant(
-            chat_request.get("tenant"),
-            base_collection=collection,
-            user_id=chat_request.get("user_id"),
-            agent_id=chat_request.get("agent_id"),
-        )
-        
-        if not query:
-            raise HTTPException(status_code=400, detail="Query is required")
+    query = chat_request.get("query", "")
+    collection = chat_request.get("collection", "default")
+    limit = int(chat_request.get("limit", 5) or 5)
+    tenant = normalize_tenant(
+        chat_request.get("tenant"),
+        base_collection=collection,
+        user_id=chat_request.get("user_id"),
+        agent_id=chat_request.get("agent_id"),
+    )
 
-        service = await resolve_shell_service(request)
+    if not query:
+        raise HTTPException(status_code=400, detail="Query is required")
+
+    context = request.app.state.shell_context
+    async with context.observability.timer("chat"):
+        enforce_http_guardrails(
+            request,
+            tenant=tenant,
+            subject=request_subject(request, tenant, fallback=f"chat:{collection}"),
+            api_key=chat_request.get("api_key"),
+        )
+        service = await get_rag_service(request)
         response = await service.chat(
             ChatRequest(
                 query=query,
@@ -1866,12 +1914,7 @@ async def chat_with_knowledge_base(chat_request: dict, request: Request):
                 tenant=tenant,
             )
         )
-        return response.to_dict()
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to chat: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    return response.to_dict()
 
 @app.get("/search")
 async def search_documents(
@@ -1881,30 +1924,33 @@ async def search_documents(
     limit: int = 5,
     user_id: Optional[int] = None,
     agent_id: Optional[int] = None,
+    api_key: Optional[str] = None,
 ):
     """Search documents."""
-    try:
-        logger.info(f"Searching for '{query}' in collection '{collection}'")
-
-        service = await resolve_shell_service(request)
+    logger.info("Searching for '%s' in collection '%s'", query, collection)
+    tenant = normalize_tenant(
+        base_collection=collection,
+        user_id=user_id,
+        agent_id=agent_id,
+    )
+    context = request.app.state.shell_context
+    async with context.observability.timer("search"):
+        enforce_http_guardrails(
+            request,
+            tenant=tenant,
+            subject=request_subject(request, tenant, fallback=f"search:{collection}"),
+            api_key=api_key,
+        )
+        service = await get_rag_service(request)
         response = await service.search(
             SearchRequest(
                 query=query,
                 collection=collection,
                 limit=limit,
-                tenant=normalize_tenant(
-                    base_collection=collection,
-                    user_id=user_id,
-                    agent_id=agent_id,
-                ),
+                tenant=tenant,
             )
         )
-        return response.to_dict()
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to search: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    return response.to_dict()
 
 @app.get("/list-documents")
 async def list_documents(
@@ -1915,43 +1961,56 @@ async def list_documents(
     filename: str = None,
     user_id: Optional[int] = None,
     agent_id: Optional[int] = None,
+    api_key: Optional[str] = None,
 ):
     """List documents in a collection."""
-    try:
-        service = await resolve_shell_service(request)
+    tenant = normalize_tenant(
+        base_collection=collection,
+        user_id=user_id,
+        agent_id=agent_id,
+    )
+    context = request.app.state.shell_context
+    async with context.observability.timer("list_documents"):
+        enforce_http_guardrails(
+            request,
+            tenant=tenant,
+            subject=request_subject(request, tenant, fallback=f"list_documents:{collection}"),
+            api_key=api_key,
+        )
+        service = await get_rag_service(request)
         result = await service.list_documents(
             collection=collection,
             limit=limit,
             offset=offset,
             filename=filename,
-            tenant=normalize_tenant(
-                base_collection=collection,
-                user_id=user_id,
-                agent_id=agent_id,
-            ),
+            tenant=tenant,
         )
-        return result
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error listing documents: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    return result
 
 
 @app.delete("/delete-document")
 async def delete_document(document_request: DeleteDocumentRequest, request: Request):
     """Delete a document."""
     try:
-        service = await resolve_shell_service(request)
-        success = await service.delete_document(
-            document_id=document_request.document_id,
-            collection=document_request.collection,
-            tenant=normalize_tenant(
-                base_collection=document_request.collection,
-                user_id=document_request.user_id,
-                agent_id=document_request.agent_id,
-            ),
+        tenant = normalize_tenant(
+            base_collection=document_request.collection,
+            user_id=document_request.user_id,
+            agent_id=document_request.agent_id,
         )
+        context = request.app.state.shell_context
+        async with context.observability.timer("delete_document"):
+            enforce_http_guardrails(
+                request,
+                tenant=tenant,
+                subject=request_subject(request, tenant, fallback=f"delete_document:{document_request.collection}"),
+                api_key=document_request.api_key,
+            )
+            service = await get_rag_service(request)
+            success = await service.delete_document(
+                document_id=document_request.document_id,
+                collection=document_request.collection,
+                tenant=tenant,
+            )
         if success:
             return {"message": "Document deleted successfully"}
         else:
@@ -1969,18 +2028,28 @@ async def list_files(
     collection: str = "default",
     user_id: Optional[int] = None,
     agent_id: Optional[int] = None,
+    api_key: Optional[str] = None,
 ):
     """List files in a collection."""
     try:
-        service = await resolve_shell_service(request)
-        result = await service.list_files(
-            collection=collection,
-            tenant=normalize_tenant(
-                base_collection=collection,
-                user_id=user_id,
-                agent_id=agent_id,
-            ),
+        tenant = normalize_tenant(
+            base_collection=collection,
+            user_id=user_id,
+            agent_id=agent_id,
         )
+        context = request.app.state.shell_context
+        async with context.observability.timer("list_files"):
+            enforce_http_guardrails(
+                request,
+                tenant=tenant,
+                subject=request_subject(request, tenant, fallback=f"list_files:{collection}"),
+                api_key=api_key,
+            )
+            service = await get_rag_service(request)
+            result = await service.list_files(
+                collection=collection,
+                tenant=tenant,
+            )
         return {"files": result}
     except HTTPException:
         raise
@@ -1993,16 +2062,25 @@ async def list_files(
 async def delete_file(file_request: DeleteFileRequest, request: Request):
     """Delete a file."""
     try:
-        service = await resolve_shell_service(request)
-        success = await service.delete_file(
-            filename=file_request.filename,
-            collection=file_request.collection,
-            tenant=normalize_tenant(
-                base_collection=file_request.collection,
-                user_id=file_request.user_id,
-                agent_id=file_request.agent_id,
-            ),
+        tenant = normalize_tenant(
+            base_collection=file_request.collection,
+            user_id=file_request.user_id,
+            agent_id=file_request.agent_id,
         )
+        context = request.app.state.shell_context
+        async with context.observability.timer("delete_file"):
+            enforce_http_guardrails(
+                request,
+                tenant=tenant,
+                subject=request_subject(request, tenant, fallback=f"delete_file:{file_request.collection}"),
+                api_key=file_request.api_key,
+            )
+            service = await get_rag_service(request)
+            success = await service.delete_file(
+                filename=file_request.filename,
+                collection=file_request.collection,
+                tenant=tenant,
+            )
         if success:
             return {"message": "File deleted successfully"}
         else:

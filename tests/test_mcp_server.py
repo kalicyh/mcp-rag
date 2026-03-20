@@ -5,6 +5,9 @@ from unittest.mock import AsyncMock
 
 from mcp_rag.contracts import SearchResponse, SearchResultView
 from mcp_rag.mcp_server import MCPServer
+from mcp_rag.observability import ObservabilityCollector
+from mcp_rag.security import SecurityPolicy, TokenBucketRateLimiter
+from mcp_rag.shell_factory import create_shell_context
 
 
 class McpServerFacadeTests(unittest.IsolatedAsyncioTestCase):
@@ -79,6 +82,49 @@ class McpServerFacadeTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(called_request.tenant.agent_id, 2)
         finally:
             server.shell_context.service_provider = original_provider
+
+    async def test_rag_ask_enforces_api_key_and_rate_limit(self):
+        service = type("FakeService", (), {})()
+        service.ask = AsyncMock(
+            return_value=SearchResponse(
+                query="fastapi",
+                collection="docs",
+                results=[
+                    SearchResultView(
+                        content="FastAPI routing and dependencies",
+                        score=0.91,
+                        metadata={"source": "guide.md"},
+                        source="guide.md",
+                        filename="guide.md",
+                    )
+                ],
+            )
+        )
+
+        context = create_shell_context(
+            service_provider=AsyncMock(return_value=service),
+            security_policy=SecurityPolicy(enabled=True, allow_anonymous=False, api_keys=["secret"]),
+            rate_limiter=TokenBucketRateLimiter(limit=1, window_seconds=60),
+            observability=ObservabilityCollector(),
+        )
+        server = MCPServer(shell_context=context)
+
+        denied = await server.handle_rag_ask({"query": "fastapi", "collection": "docs"})
+        self.assertIn("api key required", denied[0].text)
+
+        allowed = await server.handle_rag_ask(
+            {"query": "fastapi", "collection": "docs", "api_key": "secret"}
+        )
+        self.assertIn("找到 1 个相关文档", allowed[0].text)
+
+        throttled = await server.handle_rag_ask(
+            {"query": "fastapi", "collection": "docs", "api_key": "secret"}
+        )
+        self.assertIn("rate limit exceeded", throttled[0].text)
+
+        snapshot = context.observability.snapshot()
+        self.assertEqual(snapshot.total_requests, 3)
+        self.assertEqual(service.ask.await_count, 1)
 
 
 if __name__ == "__main__":

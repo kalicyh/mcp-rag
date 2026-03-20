@@ -7,14 +7,24 @@ from fastapi.testclient import TestClient
 
 from mcp_rag.contracts import ChatResponse, SearchResponse, SearchResultView
 from mcp_rag.http_server import app
+from mcp_rag.observability import ObservabilityCollector
+from mcp_rag.security import SecurityPolicy, TokenBucketRateLimiter
+from mcp_rag.shell_factory import create_shell_context
 
 
 class HttpServerFacadeTests(unittest.TestCase):
     def setUp(self):
+        self.original_context = app.state.shell_context
         self.client = TestClient(app)
 
     def tearDown(self):
         self.client.close()
+        app.state.shell_context = self.original_context
+
+    def _set_context(self, context):
+        self.client.close()
+        app.state.shell_context = context
+        self.client = TestClient(app)
 
     def _fake_service(self):
         service = type("FakeService", (), {})()
@@ -143,6 +153,48 @@ class HttpServerFacadeTests(unittest.TestCase):
             self.assertTrue(service.delete_file.await_count)
         finally:
             app.state.shell_context.service_provider = original_provider
+
+    def test_health_metrics_and_guardrails_use_shell_context(self):
+        service = self._fake_service()
+        context = create_shell_context(
+            service_provider=AsyncMock(return_value=service),
+            security_policy=SecurityPolicy(enabled=True, allow_anonymous=False, api_keys=["secret"]),
+            rate_limiter=TokenBucketRateLimiter(limit=1, window_seconds=60),
+            observability=ObservabilityCollector(),
+        )
+        self._set_context(context)
+
+        ready = self.client.get("/ready")
+        self.assertEqual(ready.status_code, 200)
+        self.assertTrue(ready.json()["ready"])
+
+        health = self.client.get("/health")
+        self.assertEqual(health.status_code, 200)
+        self.assertTrue(health.json()["ready"])
+
+        denied = self.client.get("/search", params={"query": "fastapi", "collection": "docs"})
+        self.assertEqual(denied.status_code, 401)
+
+        allowed = self.client.get(
+            "/search",
+            params={"query": "fastapi", "collection": "docs"},
+            headers={"x-api-key": "secret"},
+        )
+        self.assertEqual(allowed.status_code, 200)
+
+        throttled = self.client.get(
+            "/search",
+            params={"query": "fastapi", "collection": "docs"},
+            headers={"x-api-key": "secret"},
+        )
+        self.assertEqual(throttled.status_code, 429)
+
+        metrics = self.client.get("/metrics")
+        self.assertEqual(metrics.status_code, 200)
+        payload = metrics.json()["metrics"]
+        self.assertGreaterEqual(payload["total_requests"], 3)
+        self.assertEqual(payload["operations"]["search"]["count"], 3)
+        self.assertEqual(service.search.await_count, 1)
 
 
 if __name__ == "__main__":

@@ -10,9 +10,22 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 
 from .contracts import SearchRequest, normalize_tenant
-from .shell_factory import create_shell_context, resolve_shell_service, ShellContext
+from .shell_factory import (
+    ShellContext,
+    enforce_guardrails,
+    get_default_shell_context,
+    resolve_shell_service,
+    tenant_subject,
+)
+from .security import AuthenticationError, AuthorizationError, RateLimitExceededError
 
 logger = logging.getLogger(__name__)
+
+
+async def get_rag_service(request_adapter):
+    """Compatibility wrapper used by tests and shell code."""
+
+    return await resolve_shell_service(request_adapter)
 
 
 class MCPServer:
@@ -20,7 +33,7 @@ class MCPServer:
 
     def __init__(self, shell_context: ShellContext | None = None):
         self.server = Server("mcp-rag")
-        self.shell_context = shell_context or create_shell_context()
+        self.shell_context = shell_context or get_default_shell_context()
         self._setup_mcp_tools()
 
     def _setup_mcp_tools(self):
@@ -90,6 +103,10 @@ class MCPServer:
                                 "type": "integer",
                                 "description": "Legacy hidden agent id parameter",
                             },
+                            "api_key": {
+                                "type": "string",
+                                "description": "Optional API key for stdio clients",
+                            },
                         },
                         "required": ["query"],
                     },
@@ -115,6 +132,7 @@ class MCPServer:
             collection = str(arguments.get("collection", "default") or "default")
             limit = int(arguments.get("limit", 5) or 5)
             threshold = float(arguments.get("threshold", 0.7) or 0.7)
+            api_key = str(arguments.get("api_key", "") or "").strip() or None
             tenant = normalize_tenant(
                 arguments.get("tenant"),
                 base_collection=collection,
@@ -123,17 +141,25 @@ class MCPServer:
             )
 
             logger.info("开始处理RAG检索请求: %s", query)
-            service = await resolve_shell_service(self._request_adapter())
-            response = await service.ask(
-                SearchRequest(
-                    query=query,
-                    collection=collection,
-                    limit=limit,
-                    threshold=threshold,
-                    mode=mode,
+            request = self._request_adapter()
+            with self.shell_context.observability.timer("mcp.rag_ask"):
+                enforce_guardrails(
+                    self.shell_context,
                     tenant=tenant,
+                    api_key=api_key,
+                    subject=tenant_subject(tenant, fallback=api_key or "mcp"),
                 )
-            )
+                service = await get_rag_service(request)
+                response = await service.ask(
+                    SearchRequest(
+                        query=query,
+                        collection=collection,
+                        limit=limit,
+                        threshold=threshold,
+                        mode=mode,
+                        tenant=tenant,
+                    )
+                )
 
             if not response.results:
                 text = f"为查询 '{query}' 未找到相关文档"
@@ -155,6 +181,8 @@ class MCPServer:
 
             logger.info("RAG检索完成")
             return [types.TextContent(type="text", text="\n".join(lines).rstrip())]
+        except (AuthenticationError, AuthorizationError, RateLimitExceededError) as exc:
+            return [types.TextContent(type="text", text=f"检索过程中出错: {str(exc)}")]
         except Exception as e:
             logger.error("工具调用失败: %s", e, exc_info=True)
             return [types.TextContent(type="text", text=f"检索过程中出错: {str(e)}")]
@@ -173,7 +201,8 @@ class MCPServer:
         logger.info("启动MCP-RAG stdio服务器...")
         try:
             logger.info("初始化组件...")
-            await resolve_shell_service(self._request_adapter())
+            await get_rag_service(self._request_adapter())
+            self.shell_context.bootstrapped = True
             logger.info("组件初始化完成")
 
             async with stdio_server() as (read_stream, write_stream):
@@ -185,4 +214,4 @@ class MCPServer:
 
 
 # 全局服务器实例
-mcp_server = MCPServer()
+mcp_server = MCPServer(shell_context=get_default_shell_context())
