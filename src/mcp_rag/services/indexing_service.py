@@ -13,6 +13,7 @@ from fastapi import UploadFile
 
 from ..contracts import BatchUploadResponse, DocumentRequest, TenantSpec, UploadFileResult, normalize_tenant
 from ..core.indexing.models import TenantContext as CoreTenantContext
+from ..security import IndexQuotaPolicy, QuotaExceededError, UploadQuotaPolicy
 from .runtime import ServiceRuntime
 
 logger = logging.getLogger(__name__)
@@ -44,6 +45,7 @@ class IndexingService:
         chunks = processor.chunk_document(processed)
         if not chunks:
             raise ValueError("No content extracted from document")
+        self._enforce_index_quota(document_count=1, chunks=chunks)
 
         await vector_store.upsert_chunks(
             chunks,
@@ -71,7 +73,32 @@ class IndexingService:
         embedding_model = await self.runtime.ensure_embedding_model()
         self.runtime.attach_embedding_model(vector_store, embedding_model)
 
+        upload_policy = UploadQuotaPolicy.from_settings(self.runtime.settings)
+        file_sizes = [self._measure_upload_size(upload) for upload in files]
+        try:
+            upload_policy.require(file_sizes)
+        except QuotaExceededError as exc:
+            return BatchUploadResponse(
+                total_files=len(files),
+                successful=0,
+                failed=len(files),
+                results=[
+                    UploadFileResult(
+                        filename=getattr(upload, "filename", "unknown"),
+                        file_type="unknown",
+                        content_length=file_sizes[index],
+                        processed=False,
+                        error=str(exc),
+                        preview="",
+                    )
+                    for index, upload in enumerate(files)
+                ],
+            ).to_dict()
+
         results: list[UploadFileResult] = []
+        indexed_documents = 0
+        indexed_chunks = 0
+        indexed_chars = 0
         for upload in files:
             temp_path: Path | None = None
             try:
@@ -100,12 +127,23 @@ class IndexingService:
                     continue
 
                 chunks = processor.chunk_document(processed_doc)
+                next_document_count = indexed_documents + 1
+                next_chunk_count = indexed_chunks + len(chunks)
+                next_total_chars = indexed_chars + sum(len(chunk.content) for chunk in chunks)
+                self._enforce_index_quota(
+                    document_count=next_document_count,
+                    chunk_count=next_chunk_count,
+                    total_chars=next_total_chars,
+                )
                 await vector_store.upsert_chunks(
                     chunks,
                     tenant=tenant_spec.to_core(),
                     collection_name=tenant_spec.base_collection,
                 )
                 await self.runtime.refresh_keywords(tenant_spec.base_collection, tenant_spec.to_core())
+                indexed_documents = next_document_count
+                indexed_chunks = next_chunk_count
+                indexed_chars = next_total_chars
 
                 preview = processed_doc.content[:500]
                 if len(processed_doc.content) > 500:
@@ -276,6 +314,32 @@ class IndexingService:
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
             shutil.copyfileobj(upload.file, temp_file)
             return Path(temp_file.name)
+
+    def _enforce_index_quota(
+        self,
+        *,
+        document_count: int,
+        chunks: Sequence[Any] | None = None,
+        chunk_count: int | None = None,
+        total_chars: int | None = None,
+    ) -> None:
+        policy = IndexQuotaPolicy.from_settings(self.runtime.settings)
+        effective_chunk_count = chunk_count if chunk_count is not None else len(list(chunks or ()))
+        effective_total_chars = total_chars if total_chars is not None else sum(
+            len(getattr(chunk, "content", "")) for chunk in (chunks or ())
+        )
+        policy.require(
+            document_count=document_count,
+            chunk_count=effective_chunk_count,
+            total_chars=effective_total_chars,
+        )
+
+    def _measure_upload_size(self, upload: UploadFile) -> int:
+        current_position = upload.file.tell()
+        upload.file.seek(0, 2)
+        size = int(upload.file.tell())
+        upload.file.seek(current_position)
+        return size
 
     def _resolve_filename(self, metadata: Dict[str, Any], fallback: str = "manual_input") -> str:
         raw = str(metadata.get("filename") or metadata.get("title") or fallback or "manual_input").strip()
