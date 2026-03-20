@@ -2,45 +2,32 @@
 
 面向 AI 客户端的服务优先 RAG 服务。
 
-当前主形态：
+当前主形态是：
 - FastAPI HTTP 服务
 - Streamable HTTP MCP 端点
 - 基于 Chroma 的多集合检索
-- 统一的 AppContext / RequestContext / TenantContext
-- 进程内限流、配额、检索缓存、provider budget、观测与 readiness
-
-这一版已经补齐此前 README 里列出的核心治理缺口：
-- 正式的 request context / tenant context
-- request-level retrieval cache
-- provider 级预算、熔断和 fallback
-- p50 / p95 / p99 观测
-- 更强的 readiness / dependency health
-- Streamable HTTP MCP transport smoke 覆盖
-- 配置热更新
-- 首次运行无配置文件时不会报错
+- HTTP / MCP 共用运行时、鉴权、限流、配额、观测与租户上下文
 
 ## 当前状态
 
-当前已经完成：
-- HTTP / MCP 共用一套运行时装配
-- 检索、索引、聊天拆到独立 service 层
-- `search` / `chat` / MCP `rag_ask`
+这版已经完成：
+- 正式 `RequestContext` / `TenantContext`
+- HTTP / MCP 统一生成标准化上下文
+- service 层统一消费标准化 context
+- 配置文件热更新
+- 首次运行没有配置文件也不会报错，并会在启动时写入默认配置
+- request-level retrieval cache
+- provider 级预算、熔断、fallback
 - `/health`、`/ready`、`/metrics`
-- 基础 API key 鉴权
-- 进程内限流
-- 上传 / 索引配额
-- tenant-aware request cache
-- provider budget / circuit breaker / fallback
-- provider latency 和 percentile metrics
+- 更细的 runtime readiness / dependency health
+- Streamable HTTP MCP smoke test
 - Chroma-backed 端到端测试
-- Streamable HTTP `/mcp` 冒烟测试
 
-当前还**不是**生产级完成态，主要还差：
-- 限流、缓存、provider budget 仍是单进程内存实现，不是分布式
-- 还没有正式的 tenant quota / billing / 审计链路
-- readiness 主要是配置和运行时状态探测，不是完整 deep probe
-- 还没有 Prometheus / OpenTelemetry 这类外部观测出口
-- 还没有异步重建索引、后台清理、任务队列这类运维基础设施
+当前仍然不是“生产平台级完成态”，还缺：
+- 分布式限流、缓存、provider budget 状态共享
+- 更正式的身份体系，例如 OIDC / workspace 级鉴权
+- 更完整的 tracing / log correlation / metrics export
+- collection 生命周期治理、后台任务和资源回收策略
 
 ## 架构
 
@@ -49,6 +36,7 @@
 ```text
 HTTP / MCP
   -> app_factory.py
+  -> context.py
   -> service_facade.py
   -> services/
        - runtime.py
@@ -59,31 +47,29 @@ HTTP / MCP
   -> retrieval/
 ```
 
-关键文件：
-- 服务入口：[src/mcp_rag/main.py](/Users/kalicyh/Documents/GitHub/mcp-rag/src/mcp_rag/main.py)
-- CLI 启服：[src/mcp_rag/cli.py](/Users/kalicyh/Documents/GitHub/mcp-rag/src/mcp_rag/cli.py)
-- HTTP API：[src/mcp_rag/http_server.py](/Users/kalicyh/Documents/GitHub/mcp-rag/src/mcp_rag/http_server.py)
-- MCP 服务：[src/mcp_rag/mcp_server.py](/Users/kalicyh/Documents/GitHub/mcp-rag/src/mcp_rag/mcp_server.py)
-- 运行时装配根：[src/mcp_rag/app_factory.py](/Users/kalicyh/Documents/GitHub/mcp-rag/src/mcp_rag/app_factory.py)
-- 兼容导出层：[src/mcp_rag/shell_factory.py](/Users/kalicyh/Documents/GitHub/mcp-rag/src/mcp_rag/shell_factory.py)
-- facade：[src/mcp_rag/service_facade.py](/Users/kalicyh/Documents/GitHub/mcp-rag/src/mcp_rag/service_facade.py)
-- service 层：[src/mcp_rag/services](/Users/kalicyh/Documents/GitHub/mcp-rag/src/mcp_rag/services)
-- 检索层：[src/mcp_rag/retrieval](/Users/kalicyh/Documents/GitHub/mcp-rag/src/mcp_rag/retrieval)
-
-说明：
-- `app_factory.py` 是实际的 composition root。
-- `shell_factory.py` 现在只是兼容导出，避免旧引用断掉。
+关键模块：
+- `src/mcp_rag/main.py`: 服务启动入口
+- `src/mcp_rag/cli.py`: CLI 启服与初始化
+- `src/mcp_rag/http_server.py`: HTTP API 与 Streamable HTTP MCP 挂载
+- `src/mcp_rag/mcp_server.py`: MCP 工具定义与 `rag_ask`
+- `src/mcp_rag/app_factory.py`: HTTP / MCP 共享运行时装配
+- `src/mcp_rag/shell_factory.py`: 向后兼容导出
+- `src/mcp_rag/context.py`: `RequestContext` / `TenantContext`
+- `src/mcp_rag/services/runtime.py`: provider、cache、readiness、热更新
+- `src/mcp_rag/services/retrieval_cache.py`: request-level retrieval cache
 
 ## 主要能力
 
 - 文档上传、切分、入库
 - 向量检索 + 轻量关键词检索融合
-- LLM 摘要与问答
+- `search` / `chat` / MCP `rag_ask`
 - `collection + user_id + agent_id` 的 tenant 隔离
+- API key 鉴权
+- 进程内 rate limit
+- 上传 / 索引配额
 - request-level retrieval cache
-- provider budget / circuit breaker / fallback
+- provider-side budget、熔断、fallback
 - readiness / health / metrics
-- 配置热更新和运行时重装配
 
 ## 环境要求
 
@@ -122,7 +108,10 @@ uv run mcp-rag serve
 uv run mcp-rag init --data-dir ./data
 ```
 
-首次运行如果没有 `./data/config.json`，服务会自动以默认配置启动并生成配置文件，不会因为缺少配置文件直接报错。
+首次启动行为：
+- 如果 `./data/config.json` 不存在，服务不会报错
+- 启动阶段会自动写入默认配置
+- `ConfigManager.reload_if_changed()` 会在运行中拾取外部配置变更
 
 ## HTTP 接口
 
@@ -136,7 +125,6 @@ uv run mcp-rag init --data-dir ./data
 - `POST /config`
 - `POST /config/bulk`
 - `POST /config/reset`
-- `POST /config/reload`
 
 RAG 接口：
 - `POST /add-document`
@@ -148,10 +136,6 @@ RAG 接口：
 - `DELETE /delete-document`
 - `GET /list-files`
 - `DELETE /delete-file`
-
-`/ready` 语义：
-- `200`：transport 已 bootstrapped，且 runtime readiness 为 true
-- `503`：服务进程已起来，但依赖配置或 runtime 状态还没 ready
 
 如果启用了安全策略，可以通过以下方式传 API key：
 - HTTP Header: `x-api-key`
@@ -189,7 +173,7 @@ RAG 接口：
 }
 ```
 
-如果启用了安全策略，stdio / MCP 工具调用可以传：
+如果启用了安全策略，MCP 工具调用可以传：
 
 ```json
 {
@@ -197,18 +181,29 @@ RAG 接口：
 }
 ```
 
-## Tenant 与 Request Context
+## Request Context 与 Tenant
 
-当前 tenant / request 相关字段：
-- `collection`
+标准请求上下文字段在 `src/mcp_rag/context.py`：
 - `tenant.base_collection`
 - `tenant.user_id`
 - `tenant.agent_id`
-- 兼容字段：`user_id` / `agent_id`
+- `tenant.tenant_key`
+- `transport`
+- `operation`
+- `api_key`
 - `request_id`
 - `trace_id`
+- `subject`
+- `rate_limit_subject`
+- `quota_subject`
 
-HTTP 和 MCP 都会先归一化成统一的 `RequestContext`，service 层只消费标准化后的 tenant / request 信息。
+兼容输入：
+- `collection`
+- `tenant`
+- `user_id` / `agent_id`
+- `_user_id` / `_agent_id`
+
+service 层不再自己拼 tenant / request 身份，而是统一消费标准化后的 context。
 
 ## 配置
 
@@ -218,7 +213,7 @@ HTTP 和 MCP 都会先归一化成统一的 `RequestContext`，service 层只消
 ./data/config.json
 ```
 
-当前除了模型和检索参数，还包含以下治理相关段落：
+当前治理相关配置示例：
 
 ```json
 {
@@ -268,19 +263,30 @@ HTTP 和 MCP 都会先归一化成统一的 `RequestContext`，service 层只消
       "failure_threshold": 3,
       "cooldown_seconds": 30
     }
-  },
-  "embedding_fallback_provider": "m3e-small",
-  "llm_fallback_provider": "ollama"
+  }
 }
 ```
 
-配置更新方式：
-- `POST /config`
-- `POST /config/bulk`
-- `POST /config/reset`
-- `POST /config/reload`
+热更新行为：
+- 通过 `/config`、`/config/bulk`、`/config/reset` 修改后，运行时会同步刷新
+- 外部直接改写配置文件后，会在请求路径上通过 `reload_if_changed()` 自动拾取
+- provider、retrieval cache、guardrails 会按配置签名重新装配或失效
 
-这些接口会触发运行时热更新；涉及检索行为的配置更新会同时清空 request cache。
+## Readiness 与 Metrics
+
+- `/health` 返回整体健康摘要、错误率、慢操作和 runtime 快照
+- `/ready` 在 runtime 依赖未就绪或配置缺失时返回 `503`
+- `/metrics` 返回按 operation / provider 聚合的指标
+- 观测输出包含 `p50 / p95 / p99`
+
+当前 readiness 会显式暴露：
+- `document_processor`
+- `embedding_model`
+- `vector_store`
+- `hybrid_service`
+- `llm_model`
+- `retrieval_cache`
+- `provider_budget`
 
 ## 测试
 
@@ -293,26 +299,26 @@ uv run python -m unittest discover -s tests
 编译检查：
 
 ```bash
-uv run python -m compileall src tests
+uv run python -m compileall src
 ```
 
 当前测试覆盖：
-- service 层单测
-- request cache 单测
-- provider budget / fallback 单测
-- HTTP / MCP 壳层测试
-- `/mcp` Streamable HTTP smoke
-- 配额 / 安全 / 观测测试
+- `RequestContext` / `TenantContext`
+- 配置热更新与首次启动默认配置
+- request-level retrieval cache
+- provider budget / fallback
+- readiness / health / metrics
+- HTTP / MCP 壳层行为
+- Streamable HTTP MCP smoke
 - 基于临时 Chroma 的端到端集成测试
 
-## 下一步建议
+## 后续建议
 
-如果继续往生产化推进，优先级建议是：
-- 把限流、缓存、provider budget 下沉到 Redis 之类的共享状态
-- 做正式的 tenant quota / billing / 审计模型
-- 给 embedding / vector store / llm 加深度可控的 probe 策略
-- 补 Prometheus / OpenTelemetry 导出
-- 增加后台重建索引、清理和任务调度能力
+如果继续往生产平台推进，优先建议做：
+- 外部缓存与分布式限流
+- 更正式的租户与身份接入层
+- tracing 导出与 metrics backend
+- collection 生命周期与异步索引任务
 
 ## 许可证
 
