@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import unittest
 from unittest.mock import AsyncMock
+import tempfile
 
 from fastapi.testclient import TestClient
 
+import mcp_rag.http_server as http_server_module
+from mcp_rag.config import ConfigManager
 from mcp_rag.contracts import ChatResponse, SearchResponse, SearchResultView
 from mcp_rag.http_server import app
 from mcp_rag.observability import ObservabilityCollector
@@ -15,11 +18,13 @@ from mcp_rag.shell_factory import create_shell_context
 class HttpServerFacadeTests(unittest.TestCase):
     def setUp(self):
         self.original_context = app.state.shell_context
+        self.original_config_manager = http_server_module.config_manager
         self.client = TestClient(app)
 
     def tearDown(self):
         self.client.close()
         app.state.shell_context = self.original_context
+        http_server_module.config_manager = self.original_config_manager
 
     def _set_context(self, context):
         self.client.close()
@@ -196,6 +201,51 @@ class HttpServerFacadeTests(unittest.TestCase):
         self.assertGreaterEqual(payload["total_requests"], 3)
         self.assertEqual(payload["operations"]["search"]["count"], 3)
         self.assertEqual(service.search.await_count, 1)
+
+    def test_http_routes_expose_request_and_trace_headers(self):
+        service = self._fake_service()
+        original_provider = app.state.shell_context.service_provider
+        app.state.shell_context.service_provider = AsyncMock(return_value=service)
+        try:
+            response = self.client.get(
+                "/search",
+                params={"query": "fastapi", "collection": "docs"},
+                headers={"x-request-id": "req-1", "x-trace-id": "trace-1"},
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.headers["x-request-id"], "req-1")
+            self.assertEqual(response.headers["x-trace-id"], "trace-1")
+            called_request = service.search.await_args.args[0]
+            self.assertEqual(called_request.context.request_id, "req-1")
+            self.assertEqual(called_request.context.trace_id, "trace-1")
+        finally:
+            app.state.shell_context.service_provider = original_provider
+
+    def test_config_update_hot_reloads_shell_context(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_manager = ConfigManager(config_file=f"{tmpdir}/config.json")
+            http_server_module.config_manager = config_manager
+            context = create_shell_context(
+                settings_obj=config_manager.settings,
+                config_manager_obj=config_manager,
+                service_provider=AsyncMock(return_value=self._fake_service()),
+            )
+            context.bootstrapped = True
+            self._set_context(context)
+
+            response = self.client.post(
+                "/config",
+                json={
+                    "key": "rate_limit",
+                    "value": {"requests_per_window": 9, "window_seconds": 30, "burst": 2},
+                },
+            )
+
+            self.assertEqual(response.status_code, 200)
+            self.assertTrue(response.json()["reloaded"])
+            self.assertEqual(app.state.shell_context.settings.rate_limit.requests_per_window, 9)
+            self.assertEqual(app.state.shell_context.rate_limiter.limit, 9)
+            self.assertEqual(app.state.shell_context.rate_limiter.window_seconds, 30.0)
 
 
 if __name__ == "__main__":

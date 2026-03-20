@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 
+from ..context import normalize_request_context
 from ..contracts import ChatRequest, ChatResponse, SearchRequest
 from .retrieval_service import RetrievalService
 from .runtime import ServiceRuntime
@@ -19,6 +20,11 @@ class ChatService:
         self.retrieval_service = retrieval_service
 
     async def chat(self, request: ChatRequest) -> ChatResponse:
+        request_context = normalize_request_context(
+            request.context,
+            tenant=request.tenant,
+            base_collection=request.collection,
+        )
         search_response = await self.retrieval_service.search(
             SearchRequest(
                 query=request.query,
@@ -26,6 +32,7 @@ class ChatService:
                 limit=request.limit,
                 threshold=0.7,
                 tenant=request.tenant,
+                context=request_context,
             )
         )
 
@@ -58,4 +65,3 @@ class ChatService:
             response=answer,
             sources=search_response.results,
         )
-

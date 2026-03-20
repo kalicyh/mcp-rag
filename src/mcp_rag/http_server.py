@@ -3,6 +3,7 @@
 import logging
 from pathlib import Path
 from typing import Dict, Any, List, Optional
+from uuid import uuid4
 from fastapi import HTTPException, UploadFile, File, Form, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -12,12 +13,14 @@ from starlette.responses import PlainTextResponse
 from .config import config_manager
 from .contracts import ChatRequest, DocumentRequest, SearchRequest, normalize_tenant
 from .shell_factory import (
+    build_http_request_context,
     create_http_app,
     enforce_http_guardrails,
     get_default_shell_context,
     health_payload,
     metrics_payload,
     ready_payload,
+    reload_shell_context,
     request_subject,
     resolve_shell_service,
 )
@@ -67,6 +70,23 @@ async def _streamable_http_asgi(scope, receive, send):
 app.mount("/mcp", _streamable_http_asgi, name="streamable-mcp")
 app.mount("/mcp/", _streamable_http_asgi, name="streamable-mcp-slash")
 app.mount("/sse", _streamable_http_asgi, name="sse")
+
+
+@app.middleware("http")
+async def _request_identity_middleware(request: Request, call_next):
+    request_id = (request.headers.get("x-request-id") or "").strip() or uuid4().hex
+    trace_id = (request.headers.get("x-trace-id") or "").strip()
+    if not trace_id:
+        traceparent = (request.headers.get("traceparent") or "").strip()
+        trace_id = traceparent.split("-")[1] if traceparent.count("-") >= 3 else traceparent or request_id
+
+    request.state.request_id = request_id
+    request.state.trace_id = trace_id or request_id
+
+    response = await call_next(request)
+    response.headers.setdefault("X-Request-Id", request_id)
+    response.headers.setdefault("X-Trace-Id", trace_id or request_id)
+    return response
 
 
 async def get_rag_service(request: Request):
@@ -1754,7 +1774,8 @@ async def get_config(request: Request, api_key: Optional[str] = None):
     """Get current configuration."""
     context = request.app.state.shell_context
     async with context.observability.timer("config.get"):
-        enforce_http_guardrails(request, subject="config", api_key=api_key)
+        request_context = build_http_request_context(request, api_key=api_key, subject="config")
+        enforce_http_guardrails(request, request_context=request_context)
         return config_manager.get_all_settings()
 
 
@@ -1763,11 +1784,13 @@ async def update_config(config: ConfigUpdate, request: Request):
     """Update a single configuration setting."""
     context = request.app.state.shell_context
     async with context.observability.timer("config.update"):
-        enforce_http_guardrails(request, subject="config")
+        request_context = build_http_request_context(request, subject="config")
+        enforce_http_guardrails(request, request_context=request_context)
         success = config_manager.update_setting(config.key, config.value)
         if not success:
             raise HTTPException(status_code=400, detail=f"Failed to update config {config.key}")
-        return {"message": f"Config {config.key} updated successfully"}
+        await reload_shell_context(context, settings_obj=config_manager.settings)
+        return {"message": f"Config {config.key} updated successfully", "reloaded": True}
 
 
 @app.post("/config/bulk")
@@ -1775,11 +1798,13 @@ async def update_config_bulk(config: BulkConfigUpdate, request: Request):
     """Update multiple configuration settings."""
     context = request.app.state.shell_context
     async with context.observability.timer("config.bulk_update"):
-        enforce_http_guardrails(request, subject="config")
+        request_context = build_http_request_context(request, subject="config")
+        enforce_http_guardrails(request, request_context=request_context)
         success = config_manager.update_settings(config.updates)
         if not success:
             raise HTTPException(status_code=400, detail="Failed to update config")
-        return {"message": "Config updated successfully"}
+        await reload_shell_context(context, settings_obj=config_manager.settings)
+        return {"message": "Config updated successfully", "reloaded": True}
 
 
 @app.post("/config/reset")
@@ -1787,37 +1812,58 @@ async def reset_config(request: Request):
     """Reset configuration to defaults."""
     context = request.app.state.shell_context
     async with context.observability.timer("config.reset"):
-        enforce_http_guardrails(request, subject="config")
+        request_context = build_http_request_context(request, subject="config")
+        enforce_http_guardrails(request, request_context=request_context)
         success = config_manager.reset_to_defaults()
         if not success:
             raise HTTPException(status_code=400, detail="Failed to reset config")
-        return {"message": "Config reset to defaults successfully"}
+        await reload_shell_context(context, settings_obj=config_manager.settings)
+        return {"message": "Config reset to defaults successfully", "reloaded": True}
+
+
+@app.post("/config/reload")
+async def reload_config(request: Request):
+    """Reload configuration from disk and rebuild the live runtime."""
+    context = request.app.state.shell_context
+    async with context.observability.timer("config.reload"):
+        request_context = build_http_request_context(request, subject="config")
+        enforce_http_guardrails(request, request_context=request_context)
+        settings_obj = config_manager.reload()
+        await reload_shell_context(context, settings_obj=settings_obj)
+        return {"message": "Config reloaded successfully", "reloaded": True}
 
 
 @app.post("/add-document")
 async def add_document(doc: DocumentAdd, request: Request):
     """Add a single document."""
     try:
-        tenant = normalize_tenant(
+        request_context = build_http_request_context(
+            request,
             base_collection=doc.collection,
             user_id=doc.user_id,
             agent_id=doc.agent_id,
+            api_key=doc.api_key,
+            subject=request_subject(
+                request,
+                normalize_tenant(
+                    base_collection=doc.collection,
+                    user_id=doc.user_id,
+                    agent_id=doc.agent_id,
+                ),
+                fallback="documents",
+            ),
         )
         context = request.app.state.shell_context
         async with context.observability.timer("add_document"):
-            enforce_http_guardrails(
-                request,
-                tenant=tenant,
-                subject=request_subject(request, tenant, fallback="documents"),
-                api_key=doc.api_key,
-            )
+            enforce_http_guardrails(request, request_context=request_context)
             service = await get_rag_service(request)
             return await service.add_document(
                 DocumentRequest(
                     content=doc.content,
                     collection=doc.collection,
                     metadata=doc.metadata,
-                    tenant=tenant,
+                    tenant=request_context.tenant,
+                    context=request_context,
                 )
             )
     except QuotaExceededError as exc:
@@ -1842,16 +1888,24 @@ async def upload_files(
         user_id=user_id,
         agent_id=agent_id,
     )
+    request_context = build_http_request_context(
+        request,
+        tenant=tenant,
+        base_collection=collection,
+        user_id=user_id,
+        agent_id=agent_id,
+        api_key=api_key,
+        subject=request_subject(request, tenant, fallback=f"upload:{collection}"),
+    )
     context = request.app.state.shell_context
     async with context.observability.timer("upload_files"):
-        enforce_http_guardrails(
-            request,
-            tenant=tenant,
-            subject=request_subject(request, tenant, fallback=f"upload:{collection}"),
-            api_key=api_key,
-        )
+        enforce_http_guardrails(request, request_context=request_context)
         service = await get_rag_service(request)
-        return await service.upload_files(files, collection=collection, tenant=tenant)
+        return await service.upload_files(
+            files,
+            collection=collection,
+            request_context=request_context,
+        )
 
 
 @app.get("/collections")
@@ -1867,16 +1921,20 @@ async def list_collections(
         user_id=user_id,
         agent_id=agent_id,
     )
+    request_context = build_http_request_context(
+        request,
+        tenant=tenant,
+        base_collection="default",
+        user_id=user_id,
+        agent_id=agent_id,
+        api_key=api_key,
+        subject=request_subject(request, tenant, fallback="collections"),
+    )
     context = request.app.state.shell_context
     async with context.observability.timer("list_collections"):
-        enforce_http_guardrails(
-            request,
-            tenant=tenant,
-            subject=request_subject(request, tenant, fallback="collections"),
-            api_key=api_key,
-        )
+        enforce_http_guardrails(request, request_context=request_context)
         service = await get_rag_service(request)
-        collections = await service.list_collections(tenant=tenant)
+        collections = await service.list_collections(request_context=request_context)
     return {"collections": collections}
 
 
@@ -1892,25 +1950,30 @@ async def chat_with_knowledge_base(chat_request: dict, request: Request):
         user_id=chat_request.get("user_id"),
         agent_id=chat_request.get("agent_id"),
     )
+    request_context = build_http_request_context(
+        request,
+        tenant=tenant,
+        base_collection=collection,
+        user_id=chat_request.get("user_id"),
+        agent_id=chat_request.get("agent_id"),
+        api_key=chat_request.get("api_key"),
+        subject=request_subject(request, tenant, fallback=f"chat:{collection}"),
+    )
 
     if not query:
         raise HTTPException(status_code=400, detail="Query is required")
 
     context = request.app.state.shell_context
     async with context.observability.timer("chat"):
-        enforce_http_guardrails(
-            request,
-            tenant=tenant,
-            subject=request_subject(request, tenant, fallback=f"chat:{collection}"),
-            api_key=chat_request.get("api_key"),
-        )
+        enforce_http_guardrails(request, request_context=request_context)
         service = await get_rag_service(request)
         response = await service.chat(
             ChatRequest(
                 query=query,
                 collection=collection,
                 limit=limit,
-                tenant=tenant,
+                tenant=request_context.tenant,
+                context=request_context,
             )
         )
     return response.to_dict()
@@ -1932,21 +1995,26 @@ async def search_documents(
         user_id=user_id,
         agent_id=agent_id,
     )
+    request_context = build_http_request_context(
+        request,
+        tenant=tenant,
+        base_collection=collection,
+        user_id=user_id,
+        agent_id=agent_id,
+        api_key=api_key,
+        subject=request_subject(request, tenant, fallback=f"search:{collection}"),
+    )
     context = request.app.state.shell_context
     async with context.observability.timer("search"):
-        enforce_http_guardrails(
-            request,
-            tenant=tenant,
-            subject=request_subject(request, tenant, fallback=f"search:{collection}"),
-            api_key=api_key,
-        )
+        enforce_http_guardrails(request, request_context=request_context)
         service = await get_rag_service(request)
         response = await service.search(
             SearchRequest(
                 query=query,
                 collection=collection,
                 limit=limit,
-                tenant=tenant,
+                tenant=request_context.tenant,
+                context=request_context,
             )
         )
     return response.to_dict()
@@ -1968,21 +2036,25 @@ async def list_documents(
         user_id=user_id,
         agent_id=agent_id,
     )
+    request_context = build_http_request_context(
+        request,
+        tenant=tenant,
+        base_collection=collection,
+        user_id=user_id,
+        agent_id=agent_id,
+        api_key=api_key,
+        subject=request_subject(request, tenant, fallback=f"list_documents:{collection}"),
+    )
     context = request.app.state.shell_context
     async with context.observability.timer("list_documents"):
-        enforce_http_guardrails(
-            request,
-            tenant=tenant,
-            subject=request_subject(request, tenant, fallback=f"list_documents:{collection}"),
-            api_key=api_key,
-        )
+        enforce_http_guardrails(request, request_context=request_context)
         service = await get_rag_service(request)
         result = await service.list_documents(
             collection=collection,
             limit=limit,
             offset=offset,
             filename=filename,
-            tenant=tenant,
+            request_context=request_context,
         )
     return result
 
@@ -1996,19 +2068,23 @@ async def delete_document(document_request: DeleteDocumentRequest, request: Requ
             user_id=document_request.user_id,
             agent_id=document_request.agent_id,
         )
+        request_context = build_http_request_context(
+            request,
+            tenant=tenant,
+            base_collection=document_request.collection,
+            user_id=document_request.user_id,
+            agent_id=document_request.agent_id,
+            api_key=document_request.api_key,
+            subject=request_subject(request, tenant, fallback=f"delete_document:{document_request.collection}"),
+        )
         context = request.app.state.shell_context
         async with context.observability.timer("delete_document"):
-            enforce_http_guardrails(
-                request,
-                tenant=tenant,
-                subject=request_subject(request, tenant, fallback=f"delete_document:{document_request.collection}"),
-                api_key=document_request.api_key,
-            )
+            enforce_http_guardrails(request, request_context=request_context)
             service = await get_rag_service(request)
             success = await service.delete_document(
                 document_id=document_request.document_id,
                 collection=document_request.collection,
-                tenant=tenant,
+                request_context=request_context,
             )
         if success:
             return {"message": "Document deleted successfully"}
@@ -2036,18 +2112,22 @@ async def list_files(
             user_id=user_id,
             agent_id=agent_id,
         )
+        request_context = build_http_request_context(
+            request,
+            tenant=tenant,
+            base_collection=collection,
+            user_id=user_id,
+            agent_id=agent_id,
+            api_key=api_key,
+            subject=request_subject(request, tenant, fallback=f"list_files:{collection}"),
+        )
         context = request.app.state.shell_context
         async with context.observability.timer("list_files"):
-            enforce_http_guardrails(
-                request,
-                tenant=tenant,
-                subject=request_subject(request, tenant, fallback=f"list_files:{collection}"),
-                api_key=api_key,
-            )
+            enforce_http_guardrails(request, request_context=request_context)
             service = await get_rag_service(request)
             result = await service.list_files(
                 collection=collection,
-                tenant=tenant,
+                request_context=request_context,
             )
         return {"files": result}
     except HTTPException:
@@ -2066,19 +2146,23 @@ async def delete_file(file_request: DeleteFileRequest, request: Request):
             user_id=file_request.user_id,
             agent_id=file_request.agent_id,
         )
+        request_context = build_http_request_context(
+            request,
+            tenant=tenant,
+            base_collection=file_request.collection,
+            user_id=file_request.user_id,
+            agent_id=file_request.agent_id,
+            api_key=file_request.api_key,
+            subject=request_subject(request, tenant, fallback=f"delete_file:{file_request.collection}"),
+        )
         context = request.app.state.shell_context
         async with context.observability.timer("delete_file"):
-            enforce_http_guardrails(
-                request,
-                tenant=tenant,
-                subject=request_subject(request, tenant, fallback=f"delete_file:{file_request.collection}"),
-                api_key=file_request.api_key,
-            )
+            enforce_http_guardrails(request, request_context=request_context)
             service = await get_rag_service(request)
             success = await service.delete_file(
                 filename=file_request.filename,
                 collection=file_request.collection,
-                tenant=tenant,
+                request_context=request_context,
             )
         if success:
             return {"message": "File deleted successfully"}

@@ -11,6 +11,7 @@ from mcp.server.stdio import stdio_server
 
 from .contracts import SearchRequest, normalize_tenant
 from .shell_factory import (
+    build_mcp_request_context,
     ShellContext,
     enforce_guardrails,
     get_default_shell_context,
@@ -132,12 +133,20 @@ class MCPServer:
             collection = str(arguments.get("collection", "default") or "default")
             limit = int(arguments.get("limit", 5) or 5)
             threshold = float(arguments.get("threshold", 0.7) or 0.7)
-            api_key = str(arguments.get("api_key", "") or "").strip() or None
             tenant = normalize_tenant(
                 arguments.get("tenant"),
                 base_collection=collection,
                 user_id=arguments.get("user_id", arguments.get("_user_id")),
                 agent_id=arguments.get("agent_id", arguments.get("_agent_id")),
+            )
+            request_context = build_mcp_request_context(
+                arguments,
+                tenant=tenant,
+                base_collection=collection,
+                user_id=arguments.get("user_id", arguments.get("_user_id")),
+                agent_id=arguments.get("agent_id", arguments.get("_agent_id")),
+                api_key=arguments.get("api_key"),
+                subject=tenant_subject(tenant, fallback=str(arguments.get("api_key", "") or "mcp")),
             )
 
             logger.info("开始处理RAG检索请求: %s", query)
@@ -145,10 +154,8 @@ class MCPServer:
             with self.shell_context.observability.timer("mcp.rag_ask"):
                 enforce_guardrails(
                     self.shell_context,
-                    tenant=tenant,
-                    api_key=api_key,
-                    subject=tenant_subject(tenant, fallback=api_key or "mcp"),
-                )
+                    request_context=request_context,
+                    )
                 service = await get_rag_service(request)
                 response = await service.ask(
                     SearchRequest(
@@ -157,7 +164,8 @@ class MCPServer:
                         limit=limit,
                         threshold=threshold,
                         mode=mode,
-                        tenant=tenant,
+                        tenant=request_context.tenant,
+                        context=request_context,
                     )
                 )
 

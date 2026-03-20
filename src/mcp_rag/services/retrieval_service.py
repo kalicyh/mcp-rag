@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import List
 
+from ..context import normalize_request_context
 from ..contracts import SearchRequest, SearchResponse, SearchResultView
 from .runtime import ServiceRuntime
 
@@ -18,7 +19,12 @@ class RetrievalService:
         self.runtime = runtime
 
     async def search(self, request: SearchRequest) -> SearchResponse:
-        tenant = request.tenant.to_core()
+        request_context = normalize_request_context(
+            request.context,
+            tenant=request.tenant,
+            base_collection=request.collection,
+        )
+        tenant = request_context.tenant.to_core()
         hybrid = await self.runtime.ensure_hybrid_service()
         hits = await hybrid.retrieve(
             request.query,
@@ -58,6 +64,11 @@ class RetrievalService:
     async def ask(self, request: SearchRequest) -> SearchResponse:
         """Compatibility wrapper for rag_ask."""
 
+        request.context = normalize_request_context(
+            request.context,
+            tenant=request.tenant,
+            base_collection=request.collection,
+        )
         response = await self.search(request)
         if request.mode == "summary" and response.summary is None:
             try:

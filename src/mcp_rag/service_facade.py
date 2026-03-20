@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 
 from .config import settings
+from .context import RequestContext, normalize_request_context
 from .contracts import ChatRequest, ChatResponse, DocumentRequest, SearchRequest, SearchResponse, TenantSpec
 from .services import ChatService, IndexingService, RetrievalService, ServiceRuntime
 
@@ -37,18 +38,53 @@ class RagService:
         self.chat_service = ChatService(self.runtime, self.retrieval_service)
 
     async def add_document(self, request: DocumentRequest):
+        request.context = normalize_request_context(
+            request.context,
+            tenant=request.tenant,
+            base_collection=request.collection,
+        )
         return await self.indexing_service.add_document(request)
 
-    async def upload_files(self, files, *, collection: str = "default", tenant: TenantSpec | dict | None = None):
-        return await self.indexing_service.upload_files(files, collection=collection, tenant=tenant)
+    async def upload_files(
+        self,
+        files,
+        *,
+        collection: str = "default",
+        tenant: TenantSpec | dict | None = None,
+        request_context: RequestContext | None = None,
+    ):
+        return await self.indexing_service.upload_files(
+            files,
+            collection=collection,
+            request_context=normalize_request_context(
+                request_context,
+                tenant=tenant,
+                base_collection=collection,
+            ),
+        )
 
     async def search(self, request: SearchRequest) -> SearchResponse:
+        request.context = normalize_request_context(
+            request.context,
+            tenant=request.tenant,
+            base_collection=request.collection,
+        )
         return await self.retrieval_service.search(request)
 
     async def chat(self, request: ChatRequest) -> ChatResponse:
+        request.context = normalize_request_context(
+            request.context,
+            tenant=request.tenant,
+            base_collection=request.collection,
+        )
         return await self.chat_service.chat(request)
 
     async def ask(self, request: SearchRequest) -> SearchResponse:
+        request.context = normalize_request_context(
+            request.context,
+            tenant=request.tenant,
+            base_collection=request.collection,
+        )
         return await self.retrieval_service.ask(request)
 
     async def list_documents(
@@ -59,20 +95,48 @@ class RagService:
         offset: int = 0,
         filename: str | None = None,
         tenant: TenantSpec | dict | None = None,
+        request_context: RequestContext | None = None,
     ):
         return await self.indexing_service.list_documents(
             collection=collection,
             limit=limit,
             offset=offset,
             filename=filename,
-            tenant=tenant,
+            request_context=normalize_request_context(
+                request_context,
+                tenant=tenant,
+                base_collection=collection,
+            ),
         )
 
-    async def list_files(self, *, collection: str = "default", tenant: TenantSpec | dict | None = None):
-        return await self.indexing_service.list_files(collection=collection, tenant=tenant)
+    async def list_files(
+        self,
+        *,
+        collection: str = "default",
+        tenant: TenantSpec | dict | None = None,
+        request_context: RequestContext | None = None,
+    ):
+        return await self.indexing_service.list_files(
+            collection=collection,
+            request_context=normalize_request_context(
+                request_context,
+                tenant=tenant,
+                base_collection=collection,
+            ),
+        )
 
-    async def list_collections(self, *, tenant: TenantSpec | dict | None = None):
-        return await self.indexing_service.list_collections(tenant=tenant)
+    async def list_collections(
+        self,
+        *,
+        tenant: TenantSpec | dict | None = None,
+        request_context: RequestContext | None = None,
+    ):
+        return await self.indexing_service.list_collections(
+            request_context=normalize_request_context(
+                request_context,
+                tenant=tenant,
+            ),
+        )
 
     async def delete_document(
         self,
@@ -80,11 +144,16 @@ class RagService:
         document_id: str,
         collection: str = "default",
         tenant: TenantSpec | dict | None = None,
+        request_context: RequestContext | None = None,
     ) -> bool:
         return await self.indexing_service.delete_document(
             document_id=document_id,
             collection=collection,
-            tenant=tenant,
+            request_context=normalize_request_context(
+                request_context,
+                tenant=tenant,
+                base_collection=collection,
+            ),
         )
 
     async def delete_file(
@@ -93,11 +162,16 @@ class RagService:
         filename: str,
         collection: str = "default",
         tenant: TenantSpec | dict | None = None,
+        request_context: RequestContext | None = None,
     ) -> bool:
         return await self.indexing_service.delete_file(
             filename=filename,
             collection=collection,
-            tenant=tenant,
+            request_context=normalize_request_context(
+                request_context,
+                tenant=tenant,
+                base_collection=collection,
+            ),
         )
 
 
@@ -117,4 +191,3 @@ async def get_rag_service() -> RagService:
             if _rag_service is None:
                 _rag_service = RagService()
     return _rag_service
-

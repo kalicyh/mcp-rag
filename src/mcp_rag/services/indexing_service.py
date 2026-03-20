@@ -11,7 +11,8 @@ from typing import Any, Dict, List, Sequence
 
 from fastapi import UploadFile
 
-from ..contracts import BatchUploadResponse, DocumentRequest, TenantSpec, UploadFileResult, normalize_tenant
+from ..context import RequestContext, normalize_request_context
+from ..contracts import BatchUploadResponse, DocumentRequest, TenantSpec, UploadFileResult
 from ..core.indexing.models import TenantContext as CoreTenantContext
 from ..security import IndexQuotaPolicy, QuotaExceededError, UploadQuotaPolicy
 from .runtime import ServiceRuntime
@@ -28,7 +29,12 @@ class IndexingService:
         self.runtime = runtime
 
     async def add_document(self, request: DocumentRequest) -> Dict[str, Any]:
-        tenant = request.tenant.to_core()
+        request_context = normalize_request_context(
+            request.context,
+            tenant=request.tenant,
+            base_collection=request.collection,
+        )
+        tenant = request_context.tenant.to_core()
         processor = await self.runtime.ensure_document_processor()
         vector_store = await self.runtime.ensure_vector_store()
         embedding_model = await self.runtime.ensure_embedding_model()
@@ -66,8 +72,14 @@ class IndexingService:
         *,
         collection: str = "default",
         tenant: TenantSpec | Dict[str, Any] | None = None,
+        request_context: RequestContext | None = None,
     ) -> Dict[str, Any]:
-        tenant_spec = normalize_tenant(tenant, base_collection=collection)
+        resolved_context = normalize_request_context(
+            request_context,
+            tenant=tenant,
+            base_collection=collection,
+        )
+        tenant_spec = resolved_context.tenant
         processor = await self.runtime.ensure_document_processor()
         vector_store = await self.runtime.ensure_vector_store()
         embedding_model = await self.runtime.ensure_embedding_model()
@@ -190,9 +202,14 @@ class IndexingService:
         offset: int = 0,
         filename: str | None = None,
         tenant: TenantSpec | Dict[str, Any] | None = None,
+        request_context: RequestContext | None = None,
     ) -> Dict[str, Any]:
         vector_store = await self.runtime.ensure_vector_store()
-        tenant_spec = normalize_tenant(tenant, base_collection=collection)
+        tenant_spec = normalize_request_context(
+            request_context,
+            tenant=tenant,
+            base_collection=collection,
+        ).tenant
         return await vector_store.list_documents(
             collection_name=collection,
             limit=limit,
@@ -206,9 +223,14 @@ class IndexingService:
         *,
         collection: str = "default",
         tenant: TenantSpec | Dict[str, Any] | None = None,
+        request_context: RequestContext | None = None,
     ) -> List[Dict[str, Any]]:
         vector_store = await self.runtime.ensure_vector_store()
-        tenant_spec = normalize_tenant(tenant, base_collection=collection)
+        tenant_spec = normalize_request_context(
+            request_context,
+            tenant=tenant,
+            base_collection=collection,
+        ).tenant
         return await vector_store.list_files(
             collection_name=collection,
             tenant=tenant_spec.to_core(),
@@ -218,12 +240,15 @@ class IndexingService:
         self,
         *,
         tenant: TenantSpec | Dict[str, Any] | None = None,
+        request_context: RequestContext | None = None,
     ) -> List[str]:
         vector_store = await self.runtime.ensure_vector_store()
         collections = await vector_store.list_collections()
         names = [entry["name"] for entry in collections]
 
-        tenant_spec = normalize_tenant(tenant) if tenant is not None else None
+        tenant_spec = None
+        if tenant is not None or request_context is not None:
+            tenant_spec = normalize_request_context(request_context, tenant=tenant).tenant
         if tenant_spec is None:
             return sorted(names)
 
@@ -242,9 +267,14 @@ class IndexingService:
         document_id: str,
         collection: str = "default",
         tenant: TenantSpec | Dict[str, Any] | None = None,
+        request_context: RequestContext | None = None,
     ) -> bool:
         vector_store = await self.runtime.ensure_vector_store()
-        tenant_spec = normalize_tenant(tenant, base_collection=collection)
+        tenant_spec = normalize_request_context(
+            request_context,
+            tenant=tenant,
+            base_collection=collection,
+        ).tenant
         deleted = await self._delete_document_identifier(
             vector_store,
             identifier=document_id,
@@ -261,9 +291,14 @@ class IndexingService:
         filename: str,
         collection: str = "default",
         tenant: TenantSpec | Dict[str, Any] | None = None,
+        request_context: RequestContext | None = None,
     ) -> bool:
         vector_store = await self.runtime.ensure_vector_store()
-        tenant_spec = normalize_tenant(tenant, base_collection=collection)
+        tenant_spec = normalize_request_context(
+            request_context,
+            tenant=tenant,
+            base_collection=collection,
+        ).tenant
         result = await vector_store.delete_file(
             filename,
             collection_name=collection,

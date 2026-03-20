@@ -5,21 +5,30 @@ import asyncio
 from pathlib import Path
 import uvicorn
 
-from .config import settings
+from .config import config_manager
 from .http_server import app as default_http_app
 
-# Setup logging
 logging.basicConfig(
-    level=logging.INFO if not settings.debug else logging.DEBUG,
+    level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 
 logger = logging.getLogger(__name__)
 
 
+def _resolve_settings(app) -> object:
+    shell_context = getattr(getattr(app, "state", None), "shell_context", None)
+    if shell_context is not None:
+        return shell_context.settings
+    return config_manager.settings
+
+
 async def run_http_server(app=default_http_app):
     """Run the HTTP server only."""
     logger.info("启动MCP-RAG Streamable HTTP服务器...")
+    config_manager.ensure_config_file()
+    settings = _resolve_settings(app)
+    logging.getLogger().setLevel(logging.DEBUG if getattr(settings, "debug", False) else logging.INFO)
 
     # 确保数据目录存在
     data_dir = Path(settings.chroma_persist_directory)

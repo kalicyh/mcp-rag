@@ -52,6 +52,7 @@ class ServiceRuntime:
         self._vector_lock = asyncio.Lock()
         self._hybrid_lock = asyncio.Lock()
         self._llm_lock = asyncio.Lock()
+        self._reload_lock = asyncio.Lock()
 
     async def ensure_document_processor(self) -> DocumentProcessor:
         if self._document_processor is not None and self._document_ready:
@@ -114,9 +115,36 @@ class ServiceRuntime:
         if self._llm_model is None:
             async with self._llm_lock:
                 if self._llm_model is None:
-                    self._llm_model = await get_llm_model()
+                    self._llm_model = await get_llm_model(self.settings)
         self._llm_ready = True
         return self._llm_model
+
+    async def reload_settings(self, settings_obj) -> None:
+        """Swap runtime settings and reset cached providers when needed."""
+
+        async with self._reload_lock:
+            previous_embedding_signature = self._embedding_signature()
+            previous_runtime_signature = self._runtime_signature()
+            previous_llm_signature = self._llm_signature()
+
+            self.settings = settings_obj
+
+            if previous_embedding_signature != self._embedding_signature():
+                self._embedding_model = None
+                self._embedding_ready = False
+                self._vector_store = None
+                self._vector_ready = False
+                self._hybrid_service = None
+                self._hybrid_ready = False
+
+            if previous_runtime_signature != self._runtime_signature():
+                self._document_processor = None
+                self._document_ready = False
+
+            if previous_llm_signature != self._llm_signature():
+                await self._close_component(self._llm_model)
+                self._llm_model = None
+                self._llm_ready = False
 
     def build_indexing_settings(self) -> IndexingSettings:
         provider = (self.settings.embedding_provider or "zhipu").lower()
@@ -168,6 +196,59 @@ class ServiceRuntime:
     def attach_embedding_model(self, vector_store: ChromaVectorStore, embedding_model) -> None:
         if hasattr(vector_store, "embedding_model"):
             vector_store.embedding_model = embedding_model
+
+    def _runtime_signature(self) -> tuple[Any, ...]:
+        indexing_settings = self.build_indexing_settings()
+        return (
+            indexing_settings.persist_directory,
+            indexing_settings.embedding_provider,
+            indexing_settings.embedding_model,
+            indexing_settings.embedding_base_url,
+            indexing_settings.embedding_api_key,
+            indexing_settings.embedding_device,
+            indexing_settings.embedding_cache_dir,
+            bool(self.settings.enable_reranker),
+            int(self.settings.max_retrieval_results),
+        )
+
+    def _embedding_signature(self) -> tuple[Any, ...]:
+        indexing_settings = self.build_indexing_settings()
+        return (
+            indexing_settings.persist_directory,
+            indexing_settings.embedding_provider,
+            indexing_settings.embedding_model,
+            indexing_settings.embedding_base_url,
+            indexing_settings.embedding_api_key,
+            indexing_settings.embedding_device,
+            indexing_settings.embedding_cache_dir,
+        )
+
+    def _llm_signature(self) -> tuple[Any, ...]:
+        return (
+            str(getattr(self.settings, "llm_provider", "doubao") or "doubao").lower(),
+            getattr(self.settings, "llm_model", ""),
+            getattr(self.settings, "llm_base_url", ""),
+            getattr(self.settings, "llm_api_key", None),
+            bool(getattr(self.settings, "enable_thinking", True)),
+        )
+
+    async def _close_component(self, component: Any) -> None:
+        if component is None:
+            return
+
+        closer = getattr(component, "close", None)
+        if callable(closer):
+            await closer()
+            return
+
+        async_closer = getattr(component, "aclose", None)
+        if callable(async_closer):
+            await async_closer()
+
+    async def close(self) -> None:
+        """Close runtime-managed resources when they expose async teardown."""
+
+        await self._close_component(self._llm_model)
 
 
 RuntimeContainer = ServiceRuntime

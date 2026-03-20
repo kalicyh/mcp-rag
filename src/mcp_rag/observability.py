@@ -205,6 +205,26 @@ class ObservabilityCollector:
     def timer(self, operation: str) -> _ObservationTimer:
         return _ObservationTimer(self, operation)
 
+    def configure_from_settings(self, settings: object) -> None:
+        """Refresh health thresholds without dropping accumulated metrics."""
+
+        obs = _read_attr(settings, "observability", settings)
+        warning_error_rate = float(_read_attr(obs, "warning_error_rate", 0.05))
+        critical_error_rate = float(_read_attr(obs, "critical_error_rate", 0.2))
+        slow_request_ms = float(_read_attr(obs, "slow_request_ms", 1000.0))
+
+        if not 0 <= warning_error_rate <= 1:
+            raise ValueError("warning_error_rate must be between 0 and 1")
+        if not 0 <= critical_error_rate <= 1:
+            raise ValueError("critical_error_rate must be between 0 and 1")
+        if slow_request_ms < 0:
+            raise ValueError("slow_request_ms must be non-negative")
+
+        with self._lock:
+            self._warning_error_rate = warning_error_rate
+            self._critical_error_rate = critical_error_rate
+            self._slow_request_ms = slow_request_ms
+
     def record_request(
         self,
         operation: str,

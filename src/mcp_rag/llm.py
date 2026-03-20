@@ -2,9 +2,7 @@
 
 import logging
 from abc import ABC, abstractmethod
-from typing import List, Optional, Dict, Any
-
-from .config import settings
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -73,13 +71,21 @@ class OllamaModel(LLMModel):
 class DoubaoLLMModel(LLMModel):
     """Doubao (豆包) LLM model."""
 
-    def __init__(self, api_key: Optional[str] = None, base_url: str = "https://ark.cn-beijing.volces.com/api/v3", model: str = "doubao-seed-1.6-250615"):
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        base_url: str = "https://ark.cn-beijing.volces.com/api/v3",
+        model: str = "doubao-seed-1.6-250615",
+        *,
+        enable_thinking: bool = True,
+    ):
         if not DOUBAO_AVAILABLE:
             raise RuntimeError("httpx not available. Please install it with: pip install httpx")
 
         self.api_key = api_key
         self.base_url = base_url.rstrip('/')
         self.model = model
+        self.enable_thinking = enable_thinking
         self.client: Optional[httpx.AsyncClient] = None
 
     async def initialize(self) -> None:
@@ -109,7 +115,7 @@ class DoubaoLLMModel(LLMModel):
 
         try:
             thinking_config = {}
-            if not settings.enable_thinking:
+            if not self.enable_thinking:
                 thinking_config = {"thinking": {"type": "disabled"}}
 
             response = await self.client.post(
@@ -153,30 +159,30 @@ class DoubaoLLMModel(LLMModel):
             await self.client.aclose()
 
 
-# Global LLM model instance
-llm_model: Optional[LLMModel] = None
+async def get_llm_model(settings_obj: Any) -> LLMModel:
+    """Build an LLM model for the provided settings."""
 
+    provider = str(getattr(settings_obj, "llm_provider", "doubao") or "doubao").lower()
+    model_name = str(getattr(settings_obj, "llm_model", ""))
+    base_url = str(getattr(settings_obj, "llm_base_url", "https://ark.cn-beijing.volces.com/api/v3"))
 
-async def get_llm_model() -> LLMModel:
-    """Get the global LLM model instance."""
-    global llm_model
-    if llm_model is None:
-        if settings.llm_provider == "doubao":
-            # Check if API key is available for Doubao
-            if settings.llm_api_key:
-                llm_model = DoubaoLLMModel(
-                    api_key=settings.llm_api_key,
-                    base_url=settings.llm_base_url,
-                    model=settings.llm_model
-                )
-                await llm_model.initialize()
-            else:
-                raise ValueError("Doubao API key is required for LLM. Please configure it in the web interface.")
-        elif settings.llm_provider == "ollama":
-            llm_model = OllamaModel(
-                base_url=settings.llm_base_url,
-                model=settings.llm_model
-            )
-        else:
-            raise ValueError(f"Unsupported LLM provider: {settings.llm_provider}")
-    return llm_model
+    if provider == "doubao":
+        api_key = getattr(settings_obj, "llm_api_key", None)
+        if not api_key:
+            raise ValueError("Doubao API key is required for LLM. Please configure it in the web interface.")
+        llm_model = DoubaoLLMModel(
+            api_key=api_key,
+            base_url=base_url,
+            model=model_name,
+            enable_thinking=bool(getattr(settings_obj, "enable_thinking", True)),
+        )
+        await llm_model.initialize()
+        return llm_model
+
+    if provider == "ollama":
+        return OllamaModel(
+            base_url=base_url,
+            model=model_name,
+        )
+
+    raise ValueError(f"Unsupported LLM provider: {provider}")
