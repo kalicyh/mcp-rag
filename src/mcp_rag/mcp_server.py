@@ -1,15 +1,16 @@
 """MCP Server implementation for RAG service."""
 
+from __future__ import annotations
+
 import logging
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Sequence
 
 from mcp import Tool, types
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 
-from .config import settings
-from .database import get_vector_database, Document, SearchResult
-from .embedding import get_embedding_model
+from .contracts import SearchRequest, normalize_tenant
+from .service_facade import get_rag_service
 
 logger = logging.getLogger(__name__)
 
@@ -36,36 +37,61 @@ class MCPServer:
                         "properties": {
                             "query": {
                                 "type": "string",
-                                "description": "搜索查询"
+                                "description": "搜索查询",
                             },
                             "mode": {
                                 "type": "string",
                                 "enum": ["raw", "summary"],
                                 "description": "检索模式",
-                                "default": "raw"
+                                "default": "raw",
                             },
                             "collection": {
                                 "type": "string",
                                 "description": "要搜索的集合名称",
-                                "default": "default"
+                                "default": "default",
                             },
                             "limit": {
                                 "type": "integer",
                                 "description": "最大结果数量",
                                 "default": 5,
                                 "minimum": 1,
-                                "maximum": 20
+                                "maximum": 20,
                             },
                             "threshold": {
                                 "type": "number",
                                 "description": "相似度阈值",
                                 "default": 0.7,
                                 "minimum": 0.0,
-                                "maximum": 1.0
-                            }
+                                "maximum": 1.0,
+                            },
+                            "tenant": {
+                                "type": "object",
+                                "description": "Tenant scope (base_collection, user_id, agent_id)",
+                                "properties": {
+                                    "base_collection": {"type": "string", "default": "default"},
+                                    "user_id": {"type": "integer"},
+                                    "agent_id": {"type": "integer"},
+                                },
+                            },
+                            "user_id": {
+                                "type": "integer",
+                                "description": "Legacy user id parameter",
+                            },
+                            "agent_id": {
+                                "type": "integer",
+                                "description": "Legacy agent id parameter",
+                            },
+                            "_user_id": {
+                                "type": "integer",
+                                "description": "Legacy hidden user id parameter",
+                            },
+                            "_agent_id": {
+                                "type": "integer",
+                                "description": "Legacy hidden agent id parameter",
+                            },
                         },
-                        "required": ["query"]
-                    }
+                        "required": ["query"],
+                    },
                 )
             ]
 
@@ -73,93 +99,81 @@ class MCPServer:
         async def call_tool(name: str, arguments: Dict[str, Any]) -> Sequence[types.TextContent]:
             """调用MCP工具。"""
             if name == "rag_ask":
-                try:
-                    logger.info(f"开始处理RAG检索请求: {arguments.get('query', 'unknown')}")
-                    
-                    # 获取组件
-                    vector_db = await get_vector_database()
-                    embedding_model = await get_embedding_model()
+                return await self.handle_rag_ask(arguments)
+            raise ValueError(f"未知工具: {name}")
 
-                    # 提取参数
-                    query = arguments["query"]
-                    mode = arguments.get("mode", "raw")
-                    collection = arguments.get("collection", "default")
-                    limit = arguments.get("limit", 5)
-                    threshold = arguments.get("threshold", 0.7)
+    async def handle_rag_ask(self, arguments: Dict[str, Any]) -> Sequence[types.TextContent]:
+        """Handle rag_ask tool call with shell-level formatting."""
 
-                    _user_id = arguments.get("_user_id")
-                    _agent_id = arguments.get("_agent_id")
-                    if _user_id:
-                        logger.info(f"RAG Request from User: {_user_id}, Agent: {_agent_id}")
+        try:
+            query = str(arguments.get("query", "")).strip()
+            if not query:
+                return [types.TextContent(type="text", text="检索过程中出错: Missing required parameter: query")]
 
-                    logger.info(f"编码查询: {query}")
-                    # 编码查询
-                    query_embedding = await embedding_model.encode_single(query)
+            mode = str(arguments.get("mode", "raw") or "raw")
+            collection = str(arguments.get("collection", "default") or "default")
+            limit = int(arguments.get("limit", 5) or 5)
+            threshold = float(arguments.get("threshold", 0.7) or 0.7)
+            tenant = normalize_tenant(
+                arguments.get("tenant"),
+                base_collection=collection,
+                user_id=arguments.get("user_id", arguments.get("_user_id")),
+                agent_id=arguments.get("agent_id", arguments.get("_agent_id")),
+            )
 
-                    logger.info(f"搜索数据库，集合: {collection}, 限制: {limit}")
-                    # 搜索数据库
-                    search_results = await vector_db.search(
-                        query_embedding=query_embedding,
-                        collection_name=collection,
-                        limit=limit,
-                        threshold=threshold,
-                        user_id=_user_id,
-                        agent_id=_agent_id
-                    )
+            logger.info("开始处理RAG检索请求: %s", query)
+            service = await get_rag_service()
+            response = await service.ask(
+                SearchRequest(
+                    query=query,
+                    collection=collection,
+                    limit=limit,
+                    threshold=threshold,
+                    mode=mode,
+                    tenant=tenant,
+                )
+            )
 
-                    # 格式化结果
-                    if not search_results:
-                        logger.info("未找到相关文档")
-                        return [types.TextContent(
-                            type="text",
-                            text=f"为查询 '{query}' 未找到相关文档"
-                        )]
+            if not response.results:
+                text = f"为查询 '{query}' 未找到相关文档"
+                if mode == "summary":
+                    text += "\n\n--- 摘要模式 ---\n摘要生成功能暂未启用。"
+                return [types.TextContent(type="text", text=text)]
 
-                    logger.info(f"找到 {len(search_results)} 个相关文档")
-                    result_text = f"为查询 '{query}' 找到 {len(search_results)} 个相关文档\n\n"
+            lines = [f"为查询 '{query}' 找到 {len(response.results)} 个相关文档", ""]
+            for index, result in enumerate(response.results, 1):
+                lines.append(f"[{index}] 相似度: {result.score:.3f}")
+                lines.append(f"内容: {result.content}")
+                if result.source:
+                    lines.append(f"来源: {result.source}")
+                lines.append("")
 
-                    for i, result in enumerate(search_results, 1):
-                        result_text += f"[{i}] 相似度: {result.score:.3f}\n"
-                        result_text += f"内容: {result.document.content}\n"
-                        if result.document.metadata.get("source"):
-                            result_text += f"来源: {result.document.metadata['source']}\n"
-                        result_text += "\n"
+            if mode == "summary":
+                lines.append("--- 摘要模式 ---")
+                lines.append(response.summary or "摘要生成功能暂未启用。")
 
-                    # 对于摘要模式，添加摘要生成
-                    if mode == "summary":
-                        result_text += "\n--- 摘要模式 ---\n"
-                        result_text += "摘要生成功能尚未实现。\n"
-
-                    logger.info("RAG检索完成")
-                    return [types.TextContent(type="text", text=result_text)]
-
-                except Exception as e:
-                    logger.error(f"工具调用失败: {e}")
-                    return [types.TextContent(
-                        type="text",
-                        text=f"检索过程中出错: {str(e)}"
-                    )]
-            else:
-                raise ValueError(f"未知工具: {name}")
+            logger.info("RAG检索完成")
+            return [types.TextContent(type="text", text="\n".join(lines).rstrip())]
+        except Exception as e:
+            logger.error("工具调用失败: %s", e, exc_info=True)
+            return [types.TextContent(type="text", text=f"检索过程中出错: {str(e)}")]
 
     async def start_stdio_server(self):
         """启动MCP stdio服务器。"""
         logger.info("启动MCP-RAG stdio服务器...")
         try:
-            # 初始化组件
             logger.info("初始化组件...")
-            await get_vector_database()
-            await get_embedding_model()
+            await get_rag_service()
             logger.info("组件初始化完成")
 
-            # 启动stdio服务器
             async with stdio_server() as (read_stream, write_stream):
                 initialization_options = self.server.create_initialization_options()
                 await self.server.run(read_stream, write_stream, initialization_options)
         except Exception as e:
-            logger.error(f"MCP服务器启动失败: {e}")
+            logger.error("MCP服务器启动失败: %s", e)
             raise
 
 
 # 全局服务器实例
 mcp_server = MCPServer()
+

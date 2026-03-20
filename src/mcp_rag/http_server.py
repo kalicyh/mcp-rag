@@ -2,19 +2,16 @@
 
 import logging
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, RedirectResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from starlette.responses import PlainTextResponse
-import tempfile
-import shutil
 
-from .config import config_manager, settings
-from .database import get_vector_database
-from .embedding import get_embedding_model
-from .document_processor import get_document_processor
+from .config import config_manager
+from .contracts import ChatRequest, DocumentRequest, SearchRequest, normalize_tenant
+from .service_facade import get_rag_service
 from .mcp_server import mcp_server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 
@@ -92,7 +89,7 @@ class DocumentAdd(BaseModel):
     """Document addition model."""
     content: str
     collection: str = "default"
-    metadata: Dict[str, Any] = {}
+    metadata: Dict[str, Any] = Field(default_factory=dict)
     user_id: Optional[int] = None
     agent_id: Optional[int] = None
 
@@ -649,8 +646,6 @@ async def documents_page():
             uploadedFiles.forEach(file => {
                 formData.append('files', file);
             });
-            formData.append('files', file);
-            });
             formData.append('collection', collection);
             
             const userId = document.getElementById('authUserId').value;
@@ -813,8 +808,6 @@ async def documents_page():
                     },
                     body: JSON.stringify({
                         content: content,
-                    body: JSON.stringify({
-                        content: content,
                         collection: collection,
                         metadata: metadata,
                         user_id: document.getElementById('authUserId').value ? parseInt(document.getElementById('authUserId').value) : null,
@@ -859,6 +852,8 @@ async def documents_page():
             document.getElementById('chatQuery').value = '';
 
             try {
+                const userId = document.getElementById('authUserId').value;
+                const agentId = document.getElementById('authAgentId').value;
                 const response = await fetch(`${API_BASE}/chat`, {
                     method: 'POST',
                     headers: {
@@ -866,7 +861,9 @@ async def documents_page():
                     },
                     body: JSON.stringify({
                         query: query,
-                        collection: collection
+                        collection: collection,
+                        user_id: userId ? parseInt(userId) : null,
+                        agent_id: agentId ? parseInt(agentId) : null
                     })
                 });
 
@@ -1765,13 +1762,22 @@ async def reset_config():
 async def add_document(doc: DocumentAdd):
     """Add a single document."""
     try:
-        vector_db = await get_vector_database()
-        await vector_db.add_document(
-            content=doc.content,
-            collection_name=doc.collection,
-            metadata=doc.metadata
+        service = await get_rag_service()
+        tenant = normalize_tenant(
+            base_collection=doc.collection,
+            user_id=doc.user_id,
+            agent_id=doc.agent_id,
         )
-        return {"message": "Document added successfully"}
+        return await service.add_document(
+            DocumentRequest(
+                content=doc.content,
+                collection=doc.collection,
+                metadata=doc.metadata,
+                tenant=tenant,
+            )
+        )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to add document: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1780,90 +1786,38 @@ async def add_document(doc: DocumentAdd):
 @app.post("/upload-files")
 async def upload_files(
     files: List[UploadFile] = File(...),
-    collection: str = Form("default")
+    collection: str = Form("default"),
+    user_id: Optional[int] = Form(None),
+    agent_id: Optional[int] = Form(None),
 ):
     """Upload and process multiple files."""
     if not files:
         raise HTTPException(status_code=400, detail="No files provided")
 
-    processor = get_document_processor()
-    results = []
-
-    for file in files:
-        try:
-            # Save uploaded file to temporary location
-            with tempfile.NamedTemporaryFile(delete=False, suffix=file.filename) as temp_file:
-                shutil.copyfileobj(file.file, temp_file)
-                temp_path = Path(temp_file.name)
-
-            # Process the file
-            processed_doc = processor.process_file(temp_path, file.filename)
-
-            # Clean up temp file
-            temp_path.unlink()
-
-            # Add to vector database if processing was successful
-            if not processed_doc.error and processed_doc.content.strip():
-                try:
-                    vector_db = await get_vector_database()
-                    await vector_db.add_document(
-                        content=processed_doc.content,
-                        collection_name=collection,
-                        metadata={
-                            **processed_doc.metadata,
-                            "filename": processed_doc.filename,
-                            "file_type": processed_doc.file_type,
-                            "source": "upload"
-                        }
-                    )
-                    processed = True
-                    error = ""
-                except Exception as e:
-                    processed = False
-                    error = f"Failed to add to database: {str(e)}"
-            else:
-                processed = False
-                error = processed_doc.error or "No content extracted"
-
-            # Create preview (first 500 characters)
-            preview = processed_doc.content[:500] + "..." if len(processed_doc.content) > 500 else processed_doc.content
-
-            result = FileUploadResponse(
-                filename=file.filename,
-                file_type=processed_doc.file_type,
-                content_length=len(processed_doc.content),
-                processed=processed,
-                error=error,
-                preview=preview if processed else ""
-            )
-            results.append(result)
-
-        except Exception as e:
-            result = FileUploadResponse(
-                filename=file.filename,
-                file_type="unknown",
-                content_length=0,
-                processed=False,
-                error=str(e),
-                preview=""
-            )
-            results.append(result)
-
-    return BatchUploadResponse(
-        total_files=len(files),
-        successful=len([r for r in results if r.processed]),
-        failed=len([r for r in results if not r.processed]),
-        results=results
+    service = await get_rag_service()
+    tenant = normalize_tenant(
+        base_collection=collection,
+        user_id=user_id,
+        agent_id=agent_id,
     )
+    return await service.upload_files(files, collection=collection, tenant=tenant)
 
 
 @app.get("/collections")
-async def list_collections():
+async def list_collections(user_id: Optional[int] = None, agent_id: Optional[int] = None):
     """List all collections."""
     try:
-        vector_db = await get_vector_database()
-        collections = await vector_db.list_collections()
+        service = await get_rag_service()
+        collections = await service.list_collections(
+            tenant=normalize_tenant(
+                base_collection="default",
+                user_id=user_id,
+                agent_id=agent_id,
+            )
+        )
         return {"collections": collections}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to list collections: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1875,132 +1829,91 @@ async def chat_with_knowledge_base(chat_request: dict):
     try:
         query = chat_request.get("query", "")
         collection = chat_request.get("collection", "default")
+        limit = int(chat_request.get("limit", 5) or 5)
+        tenant = normalize_tenant(
+            chat_request.get("tenant"),
+            base_collection=collection,
+            user_id=chat_request.get("user_id"),
+            agent_id=chat_request.get("agent_id"),
+        )
         
         if not query:
             raise HTTPException(status_code=400, detail="Query is required")
 
-        # Get components
-        vector_db = await get_vector_database()
-        embedding_model = await get_embedding_model()
-
-        # Encode query and search
-        query_embedding = await embedding_model.encode_single(query)
-        search_results = await vector_db.search(
-            query_embedding=query_embedding,
-            collection_name=collection,
-            limit=5
+        service = await get_rag_service()
+        response = await service.chat(
+            ChatRequest(
+                query=query,
+                collection=collection,
+                limit=limit,
+                tenant=tenant,
+            )
         )
-
-        # Combine retrieved content
-        context = "\n\n".join([
-            f"文档 {i+1}: {r.document.content}"
-            for i, r in enumerate(search_results)
-        ])
-
-        # Generate response using LLM
-        from .llm import get_llm_model
-        llm_model = await get_llm_model()
-        
-        prompt = f"""基于以下知识库内容回答用户的问题。如果知识库内容不足以回答问题，请说明无法找到相关信息。
-
-知识库内容:
-{context}
-
-用户问题: {query}
-
-请提供准确、简洁的回答:"""
-        
-        response = await llm_model.generate(prompt)
-
-        return {
-            "query": query,
-            "response": response,
-            "sources": [
-                {
-                    "content": r.document.content[:200] + "..." if len(r.document.content) > 200 else r.document.content,
-                    "score": r.score,
-                    "metadata": r.document.metadata
-                } for r in search_results
-            ]
-        }
+        return response.to_dict()
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to chat: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/search")
-async def search_documents(query: str, collection: str = "default", limit: int = 5):
+async def search_documents(
+    query: str,
+    collection: str = "default",
+    limit: int = 5,
+    user_id: Optional[int] = None,
+    agent_id: Optional[int] = None,
+):
     """Search documents."""
     try:
         logger.info(f"Searching for '{query}' in collection '{collection}'")
 
-        # Get components
-        vector_db = await get_vector_database()
-        embedding_model = await get_embedding_model()
-
-        # Encode query
-        query_embedding = await embedding_model.encode_single(query)
-
-        # Search
-        results = await vector_db.search(
-            query_embedding=query_embedding,
-            collection_name=collection,
-            limit=limit
+        service = await get_rag_service()
+        response = await service.search(
+            SearchRequest(
+                query=query,
+                collection=collection,
+                limit=limit,
+                tenant=normalize_tenant(
+                    base_collection=collection,
+                    user_id=user_id,
+                    agent_id=agent_id,
+                ),
+            )
         )
-
-        # Check if LLM summary is enabled
-        if settings.enable_llm_summary:
-            try:
-                from .llm import get_llm_model
-                llm_model = await get_llm_model()
-
-                # Combine all retrieved content
-                combined_content = "\n\n".join([
-                    f"文档 {i+1} (相似度: {r.score:.3f}):\n{r.document.content}"
-                    for i, r in enumerate(results)
-                ])
-
-                # Generate summary using LLM
-                summary = await llm_model.summarize(combined_content, query)
-
-                return {
-                    "query": query,
-                    "collection": collection,
-                    "summary": summary,
-                    "results": [
-                        {
-                            "content": r.document.content,
-                            "score": r.score,
-                            "metadata": r.document.metadata
-                        } for r in results
-                    ]
-                }
-            except Exception as llm_error:
-                logger.warning(f"LLM summary failed, falling back to direct results: {llm_error}")
-                # Fall back to direct results if LLM fails
-
-        # Return direct search results
-        return {
-            "query": query,
-            "collection": collection,
-            "results": [
-                {
-                    "content": r.document.content,
-                    "score": r.score,
-                    "metadata": r.document.metadata
-                } for r in results
-            ]
-        }
+        return response.to_dict()
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to search: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/list-documents")
-async def list_documents(collection: str = "default", limit: int = 100, offset: int = 0, filename: str = None):
+async def list_documents(
+    collection: str = "default",
+    limit: int = 100,
+    offset: int = 0,
+    filename: str = None,
+    user_id: Optional[int] = None,
+    agent_id: Optional[int] = None,
+):
     """List documents in a collection."""
     try:
-        db = await get_vector_database()
-        result = await db.list_documents(collection_name=collection, limit=limit, offset=offset, filename=filename)
+        service = await get_rag_service()
+        result = await service.list_documents(
+            collection=collection,
+            limit=limit,
+            offset=offset,
+            filename=filename,
+            tenant=normalize_tenant(
+                base_collection=collection,
+                user_id=user_id,
+                agent_id=agent_id,
+            ),
+        )
         return result
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error listing documents: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -2010,24 +1923,47 @@ async def list_documents(collection: str = "default", limit: int = 100, offset: 
 async def delete_document(request: DeleteDocumentRequest):
     """Delete a document."""
     try:
-        db = await get_vector_database()
-        success = await db.delete_document(document_id=request.document_id, collection_name=request.collection)
+        service = await get_rag_service()
+        success = await service.delete_document(
+            document_id=request.document_id,
+            collection=request.collection,
+            tenant=normalize_tenant(
+                base_collection=request.collection,
+                user_id=request.user_id,
+                agent_id=request.agent_id,
+            ),
+        )
         if success:
             return {"message": "Document deleted successfully"}
         else:
             raise HTTPException(status_code=404, detail="Document not found or failed to delete")
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error deleting document: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/list-files")
-async def list_files(collection: str = "default"):
+async def list_files(
+    collection: str = "default",
+    user_id: Optional[int] = None,
+    agent_id: Optional[int] = None,
+):
     """List files in a collection."""
     try:
-        db = await get_vector_database()
-        result = await db.list_files(collection_name=collection)
+        service = await get_rag_service()
+        result = await service.list_files(
+            collection=collection,
+            tenant=normalize_tenant(
+                base_collection=collection,
+                user_id=user_id,
+                agent_id=agent_id,
+            ),
+        )
         return {"files": result}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error listing files: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -2037,12 +1973,22 @@ async def list_files(collection: str = "default"):
 async def delete_file(request: DeleteFileRequest):
     """Delete a file."""
     try:
-        db = await get_vector_database()
-        success = await db.delete_file(filename=request.filename, collection_name=request.collection)
+        service = await get_rag_service()
+        success = await service.delete_file(
+            filename=request.filename,
+            collection=request.collection,
+            tenant=normalize_tenant(
+                base_collection=request.collection,
+                user_id=request.user_id,
+                agent_id=request.agent_id,
+            ),
+        )
         if success:
             return {"message": "File deleted successfully"}
         else:
             raise HTTPException(status_code=404, detail="File not found or failed to delete")
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error deleting file: {e}")
         raise HTTPException(status_code=500, detail=str(e))
