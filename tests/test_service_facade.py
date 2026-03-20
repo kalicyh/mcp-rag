@@ -41,6 +41,12 @@ class _FakeSettings:
 @dataclass
 class _FakeChunk:
     chunk_id: str
+    document_id: str
+    chunk_index: int
+    total_chunks: int
+    source: str
+    filename: str
+    file_type: str
     content: str
     metadata: dict
 
@@ -54,6 +60,59 @@ class _FakeProcessedDocument:
     content: str
     metadata: dict
     error: str | None = None
+
+
+class _FakeCollection:
+    def __init__(self):
+        self.records = [
+            {
+                "id": "doc-1_chunk_0000",
+                "document_id": "doc-1",
+                "content": "stored content",
+                "metadata": {
+                    "document_id": "doc-1",
+                    "filename": "sample.txt",
+                    "source": "sample.txt",
+                    "file_type": "txt",
+                },
+            }
+        ]
+        self.delete_calls = []
+
+    def get(self, ids=None, where=None, include=None, limit=None, offset=None):
+        matches = self._match_records(ids=ids, where=where)
+        return {
+            "ids": [record["id"] for record in matches],
+            "documents": [record["content"] for record in matches],
+            "metadatas": [dict(record["metadata"]) for record in matches],
+        }
+
+    def delete(self, ids=None, where=None):
+        self.delete_calls.append(
+            {
+                "ids": list(ids) if ids is not None else None,
+                "where": dict(where) if where is not None else None,
+            }
+        )
+        self.records = [
+            record
+            for record in self.records
+            if not self._matches_record(record, ids=ids, where=where)
+        ]
+
+    def _match_records(self, *, ids=None, where=None):
+        return [
+            record
+            for record in self.records
+            if self._matches_record(record, ids=ids, where=where)
+        ]
+
+    def _matches_record(self, record, *, ids=None, where=None):
+        if ids is not None and record["id"] not in set(ids):
+            return False
+        if where and "document_id" in where and record["document_id"] != where["document_id"]:
+            return False
+        return True
 
 
 class _FakeDocumentProcessor:
@@ -88,6 +147,12 @@ class _FakeDocumentProcessor:
         return [
             _FakeChunk(
                 chunk_id=f"{document.document_id}_chunk_0000",
+                document_id=document.document_id,
+                chunk_index=0,
+                total_chunks=1,
+                source=document.source,
+                filename=document.filename,
+                file_type=document.file_type,
                 content=document.content,
                 metadata={
                     "document_id": document.document_id,
@@ -109,6 +174,7 @@ class _FakeVectorStore:
             {"name": "default", "base_collection": "default", "user_id": None, "agent_id": None},
             {"name": "u7_docs", "base_collection": "docs", "user_id": 7, "agent_id": None},
         ]
+        self.collection = _FakeCollection()
 
     async def initialize(self):
         return None
@@ -156,6 +222,9 @@ class _FakeVectorStore:
     async def delete_document(self, document_id, *, tenant=None, collection_name=None):
         self.deletes.append(("document", document_id, collection_name, tenant))
         return True
+
+    async def _get_collection(self, collection_name, tenant):
+        return self.collection
 
     async def delete_file(self, filename, *, tenant=None, collection_name=None):
         self.deletes.append(("file", filename, collection_name, tenant))
@@ -245,6 +314,11 @@ class RagServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["successful"], 1)
         self.assertEqual(payload["failed"], 0)
         self.assertEqual(len(self.vector_store.upserts), 1)
+        collection_name, tenant, chunks = self.vector_store.upserts[0]
+        self.assertEqual(collection_name, "docs")
+        self.assertEqual(chunks[0].source, "sample.txt")
+        self.assertEqual(chunks[0].metadata["source"], "sample.txt")
+        self.assertEqual(chunks[0].metadata["filename"], "sample.txt")
 
     async def test_search_and_chat_use_hybrid_and_llm(self):
         search = await self.service.search(
@@ -299,7 +373,19 @@ class RagServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("u7_docs", collections)
         self.assertTrue(deleted_document)
         self.assertTrue(deleted_file)
-        self.assertEqual(len(self.vector_store.deletes), 2)
+        self.assertEqual(self.vector_store.collection.delete_calls[0]["where"], {"document_id": "doc-1"})
+        self.assertEqual(len(self.vector_store.deletes), 1)
+        self.assertEqual(self.vector_store.deletes[0][0], "file")
+
+    async def test_delete_document_accepts_chunk_id(self):
+        deleted = await self.service.delete_document(
+            document_id="doc-1_chunk_0000",
+            collection="docs",
+            tenant=TenantSpec(base_collection="docs", user_id=7),
+        )
+
+        self.assertTrue(deleted)
+        self.assertEqual(self.vector_store.collection.delete_calls[0]["ids"], ["doc-1_chunk_0000"])
 
 
 if __name__ == "__main__":

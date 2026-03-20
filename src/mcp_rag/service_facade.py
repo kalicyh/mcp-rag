@@ -122,16 +122,21 @@ class RagService:
         for upload in files:
             temp_path: Path | None = None
             try:
+                visible_source = Path(upload.filename).name if upload.filename else "upload"
                 temp_path = await self._write_upload_to_tempfile(upload)
                 processed_doc = processor.process_file(
                     temp_path,
-                    metadata={"source": "upload", "filename": upload.filename},
-                    filename=upload.filename,
+                    metadata={"source": visible_source, "filename": visible_source},
+                    filename=visible_source,
                 )
+                processed_doc.source = visible_source
+                processed_doc.filename = visible_source
+                processed_doc.metadata["source"] = visible_source
+                processed_doc.metadata["filename"] = visible_source
                 if processed_doc.error or not processed_doc.content.strip():
                     results.append(
                         UploadFileResult(
-                            filename=upload.filename,
+                            filename=visible_source,
                             file_type=processed_doc.file_type,
                             content_length=len(processed_doc.content),
                             processed=False,
@@ -155,7 +160,7 @@ class RagService:
 
                 results.append(
                     UploadFileResult(
-                        filename=upload.filename,
+                        filename=visible_source,
                         file_type=processed_doc.file_type,
                         content_length=len(processed_doc.content),
                         processed=True,
@@ -355,13 +360,15 @@ class RagService:
     ) -> bool:
         vector_store = await self._ensure_vector_store()
         tenant_spec = normalize_tenant(tenant, base_collection=collection)
-        result = await vector_store.delete_document(
-            document_id,
-            collection_name=collection,
+        deleted = await self._delete_document_identifier(
+            vector_store,
+            identifier=document_id,
+            collection=collection,
             tenant=tenant_spec.to_core(),
         )
-        await self._refresh_keywords(collection, tenant_spec.to_core())
-        return result
+        if deleted:
+            await self._refresh_keywords(collection, tenant_spec.to_core())
+        return deleted
 
     async def delete_file(
         self,
@@ -471,6 +478,43 @@ class RagService:
     def _attach_embedding_model(self, vector_store: ChromaVectorStore, embedding_model) -> None:
         if hasattr(vector_store, "embedding_model"):
             vector_store.embedding_model = embedding_model
+
+    async def _delete_document_identifier(
+        self,
+        vector_store: ChromaVectorStore,
+        *,
+        identifier: str,
+        collection: str,
+        tenant: CoreTenantContext,
+    ) -> bool:
+        get_collection = getattr(vector_store, "_get_collection", None)
+        if not callable(get_collection):
+            return await vector_store.delete_document(
+                identifier,
+                collection_name=collection,
+                tenant=tenant,
+            )
+
+        collection_handle = await get_collection(collection, tenant)
+        deleted = False
+
+        try:
+            exact_chunk = collection_handle.get(ids=[identifier], include=["metadatas"])
+            if exact_chunk.get("ids"):
+                collection_handle.delete(ids=[identifier])
+                deleted = True
+        except Exception as exc:
+            logger.debug("Exact chunk delete probe failed for %s: %s", identifier, exc)
+
+        try:
+            document_matches = collection_handle.get(where={"document_id": identifier}, include=["metadatas"])
+            if document_matches.get("ids"):
+                collection_handle.delete(where={"document_id": identifier})
+                deleted = True
+        except Exception as exc:
+            logger.debug("Document-id delete probe failed for %s: %s", identifier, exc)
+
+        return deleted
 
     async def _refresh_keywords(self, collection: str, tenant: CoreTenantContext) -> None:
         if self._hybrid_service is not None:
