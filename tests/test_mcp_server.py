@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 from mcp_rag.contracts import SearchResponse, SearchResultView
 from mcp_rag.mcp_server import MCPServer
@@ -28,7 +28,9 @@ class McpServerFacadeTests(unittest.IsolatedAsyncioTestCase):
         )
 
         server = MCPServer()
-        with patch("mcp_rag.mcp_server.get_rag_service", new=AsyncMock(return_value=service)):
+        original_provider = server.shell_context.service_provider
+        server.shell_context.service_provider = AsyncMock(return_value=service)
+        try:
             content = await server.handle_rag_ask(
                 {
                     "query": "fastapi",
@@ -39,13 +41,14 @@ class McpServerFacadeTests(unittest.IsolatedAsyncioTestCase):
                     "tenant": {"base_collection": "docs", "user_id": 7, "agent_id": 2},
                 }
             )
-
-        self.assertEqual(len(content), 1)
-        text = content[0].text
-        self.assertIn("为查询 'fastapi' 找到 1 个相关文档", text)
-        self.assertIn("相似度: 0.910", text)
-        self.assertIn("summary text", text)
-        self.assertTrue(service.ask.await_count)
+            self.assertEqual(len(content), 1)
+            text = content[0].text
+            self.assertIn("为查询 'fastapi' 找到 1 个相关文档", text)
+            self.assertIn("相似度: 0.910", text)
+            self.assertIn("summary text", text)
+            self.assertTrue(service.ask.await_count)
+        finally:
+            server.shell_context.service_provider = original_provider
 
     async def test_rag_ask_accepts_legacy_tenant_fields(self):
         service = type("FakeService", (), {})()
@@ -58,7 +61,9 @@ class McpServerFacadeTests(unittest.IsolatedAsyncioTestCase):
         )
 
         server = MCPServer()
-        with patch("mcp_rag.mcp_server.get_rag_service", new=AsyncMock(return_value=service)):
+        original_provider = server.shell_context.service_provider
+        server.shell_context.service_provider = AsyncMock(return_value=service)
+        try:
             content = await server.handle_rag_ask(
                 {
                     "query": "fastapi",
@@ -67,14 +72,14 @@ class McpServerFacadeTests(unittest.IsolatedAsyncioTestCase):
                     "_agent_id": 2,
                 }
             )
-
-        self.assertEqual(len(content), 1)
-        self.assertIn("未找到相关文档", content[0].text)
-        called_request = service.ask.await_args.args[0]
-        self.assertEqual(called_request.tenant.user_id, 7)
-        self.assertEqual(called_request.tenant.agent_id, 2)
+            self.assertEqual(len(content), 1)
+            self.assertIn("未找到相关文档", content[0].text)
+            called_request = service.ask.await_args.args[0]
+            self.assertEqual(called_request.tenant.user_id, 7)
+            self.assertEqual(called_request.tenant.agent_id, 2)
+        finally:
+            server.shell_context.service_provider = original_provider
 
 
 if __name__ == "__main__":
     unittest.main()
-

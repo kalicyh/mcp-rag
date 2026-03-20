@@ -6,7 +6,7 @@ from pathlib import Path
 import uvicorn
 
 from .config import settings
-from .http_server import app as http_app
+from .http_server import app as default_http_app
 
 # Setup logging
 logging.basicConfig(
@@ -17,7 +17,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-async def run_http_server():
+async def run_http_server(app=default_http_app):
     """Run the HTTP server only."""
     logger.info("启动MCP-RAG Streamable HTTP服务器...")
 
@@ -26,7 +26,7 @@ async def run_http_server():
     data_dir.mkdir(parents=True, exist_ok=True)
 
     config = uvicorn.Config(
-        http_app,
+        app,
         host="0.0.0.0",
         port=settings.http_port if hasattr(settings, 'http_port') else 8060,
         log_level="info"
@@ -39,9 +39,9 @@ async def run_http_server():
     await server.serve()
 
 
-def run_http_server_sync():
+def run_http_server_sync(app=default_http_app):
     """同步包装器 for HTTP server."""
-    asyncio.run(run_http_server())
+    asyncio.run(run_http_server(app=app))
 
 
 async def main():
@@ -49,7 +49,7 @@ async def main():
     logger.info("启动MCP-RAG服务...")
 
     try:
-        await run_http_server()
+        await run_http_server(app=default_http_app)
 
     except KeyboardInterrupt:
         logger.info("正在关闭MCP-RAG服务...")

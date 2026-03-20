@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 from fastapi.testclient import TestClient
 
@@ -61,7 +61,9 @@ class HttpServerFacadeTests(unittest.TestCase):
 
     def test_search_chat_upload_and_collections_use_facade(self):
         service = self._fake_service()
-        with patch("mcp_rag.http_server.get_rag_service", new=AsyncMock(return_value=service)):
+        original_provider = app.state.shell_context.service_provider
+        app.state.shell_context.service_provider = AsyncMock(return_value=service)
+        try:
             search = self.client.get("/search", params={"query": "fastapi", "collection": "docs", "limit": 3, "user_id": 7, "agent_id": 2})
             self.assertEqual(search.status_code, 200)
             self.assertEqual(search.json()["results"][0]["filename"], "guide.md")
@@ -89,10 +91,14 @@ class HttpServerFacadeTests(unittest.TestCase):
             self.assertTrue(service.chat.await_count)
             self.assertTrue(service.upload_files.await_count)
             self.assertTrue(service.list_collections.await_count)
+        finally:
+            app.state.shell_context.service_provider = original_provider
 
     def test_document_management_routes_use_facade(self):
         service = self._fake_service()
-        with patch("mcp_rag.http_server.get_rag_service", new=AsyncMock(return_value=service)):
+        original_provider = app.state.shell_context.service_provider
+        app.state.shell_context.service_provider = AsyncMock(return_value=service)
+        try:
             add = self.client.post(
                 "/add-document",
                 json={
@@ -135,6 +141,8 @@ class HttpServerFacadeTests(unittest.TestCase):
             self.assertTrue(service.list_files.await_count)
             self.assertTrue(service.delete_document.await_count)
             self.assertTrue(service.delete_file.await_count)
+        finally:
+            app.state.shell_context.service_provider = original_provider
 
 
 if __name__ == "__main__":

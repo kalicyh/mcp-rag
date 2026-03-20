@@ -10,7 +10,7 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 
 from .contracts import SearchRequest, normalize_tenant
-from .service_facade import get_rag_service
+from .shell_factory import create_shell_context, resolve_shell_service, ShellContext
 
 logger = logging.getLogger(__name__)
 
@@ -18,8 +18,9 @@ logger = logging.getLogger(__name__)
 class MCPServer:
     """MCP Server for RAG operations."""
 
-    def __init__(self):
+    def __init__(self, shell_context: ShellContext | None = None):
         self.server = Server("mcp-rag")
+        self.shell_context = shell_context or create_shell_context()
         self._setup_mcp_tools()
 
     def _setup_mcp_tools(self):
@@ -122,7 +123,7 @@ class MCPServer:
             )
 
             logger.info("开始处理RAG检索请求: %s", query)
-            service = await get_rag_service()
+            service = await resolve_shell_service(self._request_adapter())
             response = await service.ask(
                 SearchRequest(
                     query=query,
@@ -158,12 +159,21 @@ class MCPServer:
             logger.error("工具调用失败: %s", e, exc_info=True)
             return [types.TextContent(type="text", text=f"检索过程中出错: {str(e)}")]
 
+    def _request_adapter(self):
+        """Adapt the shell context to the HTTP helper interface."""
+
+        class _Adapter:
+            def __init__(self, context: ShellContext):
+                self.app = type("_App", (), {"state": type("_State", (), {"shell_context": context})()})()
+
+        return _Adapter(self.shell_context)
+
     async def start_stdio_server(self):
         """启动MCP stdio服务器。"""
         logger.info("启动MCP-RAG stdio服务器...")
         try:
             logger.info("初始化组件...")
-            await get_rag_service()
+            await resolve_shell_service(self._request_adapter())
             logger.info("组件初始化完成")
 
             async with stdio_server() as (read_stream, write_stream):
@@ -176,4 +186,3 @@ class MCPServer:
 
 # 全局服务器实例
 mcp_server = MCPServer()
-

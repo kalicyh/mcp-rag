@@ -3,7 +3,7 @@
 import logging
 from pathlib import Path
 from typing import Dict, Any, List, Optional
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi import HTTPException, UploadFile, File, Form, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel, Field
@@ -11,13 +11,22 @@ from starlette.responses import PlainTextResponse
 
 from .config import config_manager
 from .contracts import ChatRequest, DocumentRequest, SearchRequest, normalize_tenant
-from .service_facade import get_rag_service
+from .shell_factory import (
+    create_http_app,
+    enforce_request_guards,
+    health_payload,
+    metrics_payload,
+    ready_payload,
+    request_api_key,
+    request_subject,
+    resolve_shell_service,
+)
 from .mcp_server import mcp_server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="MCP-RAG HTTP API", description="API for configuring MCP-RAG and adding documents")
+app = create_http_app()
 
 # Mount static files
 static_path = Path(__file__).parent / "static"
@@ -50,8 +59,15 @@ app.mount("/mcp/", _streamable_http_asgi, name="streamable-mcp-slash")
 app.mount("/sse", _streamable_http_asgi, name="sse")
 
 
+async def get_rag_service(request: Request):
+    """Compatibility wrapper used by unit tests and the shell routes."""
+
+    return await resolve_shell_service(request)
+
+
 @app.on_event("startup")
 async def _start_streamable_http_manager():
+    app.state.shell_context.bootstrapped = True
     context = streamable_http_manager.run()
     app.state.streamable_http_context = context
     try:
@@ -120,6 +136,24 @@ async def root():
 async def doc_redirect():
     """Redirect to API documentation."""
     return RedirectResponse(url="/docs")
+
+
+@app.get("/health")
+async def health(request: Request):
+    """Lightweight health summary without warming the runtime."""
+    return health_payload(request.app.state.shell_context)
+
+
+@app.get("/ready")
+async def ready(request: Request):
+    """Readiness signal for shell wiring."""
+    return ready_payload(request.app.state.shell_context)
+
+
+@app.get("/metrics")
+async def metrics(request: Request):
+    """Observability snapshot."""
+    return metrics_payload(request.app.state.shell_context)
 
 
 @app.get("/documents-page", response_class=HTMLResponse)
@@ -1741,10 +1775,10 @@ async def reset_config():
 
 
 @app.post("/add-document")
-async def add_document(doc: DocumentAdd):
+async def add_document(doc: DocumentAdd, request: Request):
     """Add a single document."""
     try:
-        service = await get_rag_service()
+        service = await resolve_shell_service(request)
         tenant = normalize_tenant(
             base_collection=doc.collection,
             user_id=doc.user_id,
@@ -1767,6 +1801,7 @@ async def add_document(doc: DocumentAdd):
 
 @app.post("/upload-files")
 async def upload_files(
+    request: Request,
     files: List[UploadFile] = File(...),
     collection: str = Form("default"),
     user_id: Optional[int] = Form(None),
@@ -1776,7 +1811,7 @@ async def upload_files(
     if not files:
         raise HTTPException(status_code=400, detail="No files provided")
 
-    service = await get_rag_service()
+    service = await resolve_shell_service(request)
     tenant = normalize_tenant(
         base_collection=collection,
         user_id=user_id,
@@ -1786,10 +1821,10 @@ async def upload_files(
 
 
 @app.get("/collections")
-async def list_collections(user_id: Optional[int] = None, agent_id: Optional[int] = None):
+async def list_collections(request: Request, user_id: Optional[int] = None, agent_id: Optional[int] = None):
     """List all collections."""
     try:
-        service = await get_rag_service()
+        service = await resolve_shell_service(request)
         collections = await service.list_collections(
             tenant=normalize_tenant(
                 base_collection="default",
@@ -1806,7 +1841,7 @@ async def list_collections(user_id: Optional[int] = None, agent_id: Optional[int
 
 
 @app.post("/chat")
-async def chat_with_knowledge_base(chat_request: dict):
+async def chat_with_knowledge_base(chat_request: dict, request: Request):
     """Chat with knowledge base using LLM."""
     try:
         query = chat_request.get("query", "")
@@ -1822,7 +1857,7 @@ async def chat_with_knowledge_base(chat_request: dict):
         if not query:
             raise HTTPException(status_code=400, detail="Query is required")
 
-        service = await get_rag_service()
+        service = await resolve_shell_service(request)
         response = await service.chat(
             ChatRequest(
                 query=query,
@@ -1840,6 +1875,7 @@ async def chat_with_knowledge_base(chat_request: dict):
 
 @app.get("/search")
 async def search_documents(
+    request: Request,
     query: str,
     collection: str = "default",
     limit: int = 5,
@@ -1850,7 +1886,7 @@ async def search_documents(
     try:
         logger.info(f"Searching for '{query}' in collection '{collection}'")
 
-        service = await get_rag_service()
+        service = await resolve_shell_service(request)
         response = await service.search(
             SearchRequest(
                 query=query,
@@ -1872,6 +1908,7 @@ async def search_documents(
 
 @app.get("/list-documents")
 async def list_documents(
+    request: Request,
     collection: str = "default",
     limit: int = 100,
     offset: int = 0,
@@ -1881,7 +1918,7 @@ async def list_documents(
 ):
     """List documents in a collection."""
     try:
-        service = await get_rag_service()
+        service = await resolve_shell_service(request)
         result = await service.list_documents(
             collection=collection,
             limit=limit,
@@ -1902,17 +1939,17 @@ async def list_documents(
 
 
 @app.delete("/delete-document")
-async def delete_document(request: DeleteDocumentRequest):
+async def delete_document(document_request: DeleteDocumentRequest, request: Request):
     """Delete a document."""
     try:
-        service = await get_rag_service()
+        service = await resolve_shell_service(request)
         success = await service.delete_document(
-            document_id=request.document_id,
-            collection=request.collection,
+            document_id=document_request.document_id,
+            collection=document_request.collection,
             tenant=normalize_tenant(
-                base_collection=request.collection,
-                user_id=request.user_id,
-                agent_id=request.agent_id,
+                base_collection=document_request.collection,
+                user_id=document_request.user_id,
+                agent_id=document_request.agent_id,
             ),
         )
         if success:
@@ -1928,13 +1965,14 @@ async def delete_document(request: DeleteDocumentRequest):
 
 @app.get("/list-files")
 async def list_files(
+    request: Request,
     collection: str = "default",
     user_id: Optional[int] = None,
     agent_id: Optional[int] = None,
 ):
     """List files in a collection."""
     try:
-        service = await get_rag_service()
+        service = await resolve_shell_service(request)
         result = await service.list_files(
             collection=collection,
             tenant=normalize_tenant(
@@ -1952,17 +1990,17 @@ async def list_files(
 
 
 @app.delete("/delete-file")
-async def delete_file(request: DeleteFileRequest):
+async def delete_file(file_request: DeleteFileRequest, request: Request):
     """Delete a file."""
     try:
-        service = await get_rag_service()
+        service = await resolve_shell_service(request)
         success = await service.delete_file(
-            filename=request.filename,
-            collection=request.collection,
+            filename=file_request.filename,
+            collection=file_request.collection,
             tenant=normalize_tenant(
-                base_collection=request.collection,
-                user_id=request.user_id,
-                agent_id=request.agent_id,
+                base_collection=file_request.collection,
+                user_id=file_request.user_id,
+                agent_id=file_request.agent_id,
             ),
         )
         if success:
