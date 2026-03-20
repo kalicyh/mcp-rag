@@ -1,17 +1,56 @@
 """Configuration management for MCP-RAG service."""
 
+from __future__ import annotations
+
 import json
-import os
 from pathlib import Path
-from typing import Optional, Dict
+from typing import Dict, Optional
+
 from pydantic import BaseModel, Field
 
 
 class ProviderConfig(BaseModel):
     """Configuration for a specific model provider."""
+
     base_url: str
     model: str
     api_key: Optional[str] = None
+
+
+class SecuritySettings(BaseModel):
+    """Auth and tenant-scoped API key settings."""
+
+    enabled: bool = Field(default=False, description="启用安全校验")
+    allow_anonymous: bool = Field(default=True, description="允许匿名访问")
+    api_keys: list[str] = Field(default_factory=list, description="全局 API Key 列表")
+    tenant_api_keys: Dict[str, list[str]] = Field(default_factory=dict, description="按 tenant key 绑定的 API Key 列表")
+
+
+class RateLimitSettings(BaseModel):
+    """In-memory request rate limit settings."""
+
+    requests_per_window: int = Field(default=120, description="窗口内允许的请求数")
+    window_seconds: int = Field(default=60, description="限流窗口长度")
+    burst: int = Field(default=30, description="预留突发额度")
+
+
+class QuotaSettings(BaseModel):
+    """Upload and indexing quota settings."""
+
+    max_upload_files: int = Field(default=20, description="单次上传最大文件数")
+    max_upload_bytes: int = Field(default=50 * 1024 * 1024, description="单次上传最大总字节数")
+    max_upload_file_bytes: int = Field(default=10 * 1024 * 1024, description="单文件最大字节数")
+    max_index_documents: int = Field(default=500, description="单次索引最大文档数")
+    max_index_chunks: int = Field(default=2000, description="单次索引最大 chunk 数")
+    max_index_chars: int = Field(default=500_000, description="单次索引最大字符数")
+
+
+class ObservabilitySettings(BaseModel):
+    """Thresholds for health summaries."""
+
+    warning_error_rate: float = Field(default=0.05, description="健康摘要警告错误率")
+    critical_error_rate: float = Field(default=0.2, description="健康摘要严重错误率")
+    slow_request_ms: float = Field(default=1000.0, description="慢请求阈值（毫秒）")
 
 
 class Settings(BaseModel):
@@ -62,6 +101,12 @@ class Settings(BaseModel):
     similarity_threshold: float = Field(default=0.7, description="相似度阈值")
     enable_reranker: bool = Field(default=False, description="启用重排序")
     enable_cache: bool = Field(default=False, description="启用缓存")
+
+    # Security and observability guardrails
+    security: SecuritySettings = Field(default_factory=SecuritySettings, description="安全配置")
+    rate_limit: RateLimitSettings = Field(default_factory=RateLimitSettings, description="限流配置")
+    quotas: QuotaSettings = Field(default_factory=QuotaSettings, description="配额配置")
+    observability: ObservabilitySettings = Field(default_factory=ObservabilitySettings, description="观测配置")
 
 
 class ConfigManager:
