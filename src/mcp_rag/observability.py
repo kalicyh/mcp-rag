@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from contextlib import AbstractAsyncContextManager, AbstractContextManager
 from dataclasses import dataclass, field
+from math import ceil
 from threading import RLock
 from time import monotonic
 from typing import Any, Callable, Mapping
@@ -27,6 +28,7 @@ class _OperationState:
     last_latency_ms: float = 0.0
     last_error: str | None = None
     last_seen_at: float | None = None
+    samples: list[float] = field(default_factory=list)
 
     def observe(self, duration_ms: float, *, success: bool, error: str | None, seen_at: float) -> None:
         self.count += 1
@@ -38,9 +40,13 @@ class _OperationState:
         self.max_latency_ms = max(self.max_latency_ms, duration_ms)
         self.last_latency_ms = duration_ms
         self.last_seen_at = seen_at
+        self.samples.append(duration_ms)
+        if len(self.samples) > 512:
+            self.samples.pop(0)
 
     def snapshot(self) -> OperationStats:
         average = self.total_latency_ms / self.count if self.count else 0.0
+        p50, p95, p99 = _percentiles(self.samples)
         return OperationStats(
             count=self.count,
             error_count=self.error_count,
@@ -49,6 +55,9 @@ class _OperationState:
             min_latency_ms=0.0 if self.count == 0 else self.min_latency_ms,
             max_latency_ms=self.max_latency_ms,
             last_latency_ms=self.last_latency_ms,
+            p50_latency_ms=p50,
+            p95_latency_ms=p95,
+            p99_latency_ms=p99,
             last_error=self.last_error,
             last_seen_at=self.last_seen_at,
         )
@@ -65,6 +74,9 @@ class OperationStats:
     min_latency_ms: float
     max_latency_ms: float
     last_latency_ms: float
+    p50_latency_ms: float
+    p95_latency_ms: float
+    p99_latency_ms: float
     last_error: str | None = None
     last_seen_at: float | None = None
 
@@ -77,6 +89,9 @@ class OperationStats:
             "min_latency_ms": self.min_latency_ms,
             "max_latency_ms": self.max_latency_ms,
             "last_latency_ms": self.last_latency_ms,
+            "p50_latency_ms": self.p50_latency_ms,
+            "p95_latency_ms": self.p95_latency_ms,
+            "p99_latency_ms": self.p99_latency_ms,
             "last_error": self.last_error,
             "last_seen_at": self.last_seen_at,
         }
@@ -92,6 +107,7 @@ class MetricsSnapshot:
     average_latency_ms: float
     uptime_seconds: float
     operations: dict[str, OperationStats] = field(default_factory=dict)
+    providers: dict[str, OperationStats] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -101,6 +117,7 @@ class MetricsSnapshot:
             "average_latency_ms": self.average_latency_ms,
             "uptime_seconds": self.uptime_seconds,
             "operations": {name: stats.to_dict() for name, stats in self.operations.items()},
+            "providers": {name: stats.to_dict() for name, stats in self.providers.items()},
         }
 
 
@@ -192,6 +209,7 @@ class ObservabilityCollector:
         self._error_count = 0
         self._total_latency_ms = 0.0
         self._operations: dict[str, _OperationState] = {}
+        self._providers: dict[str, _OperationState] = {}
 
     @classmethod
     def from_settings(cls, settings: object) -> ObservabilityCollector:
@@ -242,12 +260,28 @@ class ObservabilityCollector:
             if not success:
                 self._error_count += 1
 
+    def record_provider_latency(
+        self,
+        provider: str,
+        operation: str,
+        duration_ms: float,
+        *,
+        success: bool = True,
+        error: str | None = None,
+    ) -> None:
+        key = f"{provider}.{operation}"
+        seen_at = self._clock()
+        with self._lock:
+            state = self._providers.setdefault(key, _OperationState())
+            state.observe(duration_ms, success=success, error=error, seen_at=seen_at)
+
     def observe_latency(self, operation: str, duration_ms: float) -> None:
         self.record_request(operation, duration_ms)
 
     def snapshot(self) -> MetricsSnapshot:
         with self._lock:
             operations = {name: state.snapshot() for name, state in self._operations.items()}
+            providers = {name: state.snapshot() for name, state in self._providers.items()}
             average = self._total_latency_ms / self._total_requests if self._total_requests else 0.0
             return MetricsSnapshot(
                 total_requests=self._total_requests,
@@ -256,6 +290,7 @@ class ObservabilityCollector:
                 average_latency_ms=average,
                 uptime_seconds=max(0.0, self._clock() - self._started_at),
                 operations=operations,
+                providers=providers,
             )
 
     def health_summary(self) -> HealthSummary:
@@ -304,6 +339,20 @@ class ObservabilityCollector:
             "metrics": snapshot.to_dict(),
             "health": health.to_dict(),
         }
+
+
+def _percentiles(samples: list[float]) -> tuple[float, float, float]:
+    if not samples:
+        return 0.0, 0.0, 0.0
+    ordered = sorted(samples)
+
+    def _pick(percentile: float) -> float:
+        if len(ordered) == 1:
+            return ordered[0]
+        index = max(0, min(len(ordered) - 1, ceil(percentile * len(ordered)) - 1))
+        return ordered[index]
+
+    return _pick(0.50), _pick(0.95), _pick(0.99)
 
 
 MetricsCollector = ObservabilityCollector

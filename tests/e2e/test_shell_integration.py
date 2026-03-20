@@ -141,6 +141,7 @@ class ShellIntegrationE2ETests(unittest.IsolatedAsyncioTestCase):
         ready = self.client.get("/ready")
         self.assertEqual(ready.status_code, 200)
         self.assertTrue(ready.json()["ready"])
+        self.assertTrue(ready.json()["runtime"]["vector_store"]["ready"])
 
         server = MCPServer(shell_context=self.context)
         mcp_result = await server.handle_rag_ask(
@@ -175,4 +176,6 @@ class ShellIntegrationE2ETests(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(metrics_payload["operations"]["upload_files"]["count"], 1)
         self.assertGreaterEqual(metrics_payload["operations"]["search"]["count"], 3)
         self.assertGreaterEqual(metrics_payload["operations"]["chat"]["count"], 1)
+        self.assertIn("providers", metrics_payload)
+        self.assertIn("llm.generate", metrics_payload["providers"])
         self.assertGreaterEqual(self.context.observability.snapshot().operations["mcp.rag_ask"].count, 1)

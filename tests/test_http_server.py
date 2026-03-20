@@ -175,10 +175,13 @@ class HttpServerFacadeTests(unittest.TestCase):
         ready = self.client.get("/ready")
         self.assertEqual(ready.status_code, 200)
         self.assertTrue(ready.json()["ready"])
+        self.assertIn("runtime", ready.json())
+        self.assertIn("embedding_model", ready.json()["runtime"])
 
         health = self.client.get("/health")
         self.assertEqual(health.status_code, 200)
         self.assertTrue(health.json()["ready"])
+        self.assertIn("config_revision", health.json())
 
         denied = self.client.get("/search", params={"query": "fastapi", "collection": "docs"})
         self.assertEqual(denied.status_code, 401)
@@ -199,10 +202,13 @@ class HttpServerFacadeTests(unittest.TestCase):
 
         metrics = self.client.get("/metrics")
         self.assertEqual(metrics.status_code, 200)
-        payload = metrics.json()["metrics"]
+        metrics_json = metrics.json()
+        payload = metrics_json["metrics"]
         self.assertGreaterEqual(payload["total_requests"], 3)
         self.assertEqual(payload["operations"]["search"]["count"], 3)
         self.assertEqual(service.search.await_count, 1)
+        self.assertIn("providers", payload)
+        self.assertIn("config_revision", metrics_json)
 
     def test_http_routes_expose_request_and_trace_headers(self):
         service = self._fake_service()
@@ -248,6 +254,7 @@ class HttpServerFacadeTests(unittest.TestCase):
             self.assertEqual(app.state.shell_context.settings.rate_limit.requests_per_window, 9)
             self.assertEqual(app.state.shell_context.rate_limiter.limit, 9)
             self.assertEqual(app.state.shell_context.rate_limiter.window_seconds, 30.0)
+            self.assertEqual(app.state.shell_context.config_revision, config_manager.revision)
 
     def test_config_update_invalidates_runtime_retrieval_cache(self):
         with tempfile.TemporaryDirectory() as tmpdir:

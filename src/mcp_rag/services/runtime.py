@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from threading import Lock
+from time import monotonic
 from typing import Any
 
 from ..config import settings
@@ -31,6 +32,7 @@ class ServiceRuntime:
         self,
         *,
         settings_obj=settings,
+        observability=None,
         document_processor: DocumentProcessor | None = None,
         embedding_model: Any | None = None,
         vector_store: ChromaVectorStore | None = None,
@@ -38,6 +40,7 @@ class ServiceRuntime:
         llm_model: Any | None = None,
     ):
         self.settings = settings_obj
+        self.observability = observability
         self._document_processor = document_processor
         self._embedding_model = embedding_model
         self._vector_store = vector_store
@@ -70,6 +73,7 @@ class ServiceRuntime:
             return self._document_processor
 
     async def ensure_embedding_model(self):
+        started = self._clock()
         if self._embedding_model is None:
             async with self._embedding_lock:
                 if self._embedding_model is None:
@@ -83,9 +87,11 @@ class ServiceRuntime:
 
         if self._vector_store is not None and hasattr(self._vector_store, "embedding_model"):
             self._vector_store.embedding_model = self._embedding_model
+        self._record_provider_latency("embedding", "ensure", self._clock() - started)
         return self._embedding_model
 
     async def ensure_vector_store(self) -> ChromaVectorStore:
+        started = self._clock()
         if self._vector_store is None:
             async with self._vector_lock:
                 if self._vector_store is None:
@@ -99,9 +105,11 @@ class ServiceRuntime:
             if callable(initializer):
                 await initializer()
             self._vector_ready = True
+        self._record_provider_latency("vector_store", "ensure", self._clock() - started)
         return self._vector_store
 
     async def ensure_hybrid_service(self) -> HybridRetrievalService:
+        started = self._clock()
         if self._hybrid_service is None:
             async with self._hybrid_lock:
                 if self._hybrid_service is None:
@@ -114,14 +122,17 @@ class ServiceRuntime:
                         candidate_pool_size=max(10, int(self.settings.max_retrieval_results)),
                     )
         self._hybrid_ready = True
+        self._record_provider_latency("retrieval", "ensure", self._clock() - started)
         return self._hybrid_service
 
     async def ensure_llm_model(self):
+        started = self._clock()
         if self._llm_model is None:
             async with self._llm_lock:
                 if self._llm_model is None:
                     self._llm_model = await get_llm_model(self.settings)
         self._llm_ready = True
+        self._record_provider_latency("llm", "ensure", self._clock() - started)
         return self._llm_model
 
     def get_retrieval_cache(self) -> RetrievalCache | None:
@@ -197,6 +208,17 @@ class ServiceRuntime:
                 self._retrieval_cache = None
             elif previous_retrieval_signature != self._retrieval_signature():
                 await self.invalidate_all_retrieval_cache()
+
+    def readiness_snapshot(self) -> dict[str, Any]:
+        """Return dependency readiness without forcing initialization."""
+
+        return {
+            "document_processor": self._dependency_snapshot(self._document_ready, self._document_processor),
+            "embedding_model": self._dependency_snapshot(self._embedding_ready, self._embedding_model),
+            "vector_store": self._dependency_snapshot(self._vector_ready, self._vector_store),
+            "hybrid_service": self._dependency_snapshot(self._hybrid_ready, self._hybrid_service),
+            "llm_model": self._dependency_snapshot(self._llm_ready, self._llm_model),
+        }
 
     def build_indexing_settings(self) -> IndexingSettings:
         provider = (self.settings.embedding_provider or "zhipu").lower()
@@ -313,6 +335,21 @@ class ServiceRuntime:
         """Close runtime-managed resources when they expose async teardown."""
 
         await self._close_component(self._llm_model)
+
+    def _clock(self) -> float:
+        return monotonic()
+
+    def _record_provider_latency(self, provider: str, operation: str, duration_seconds: float) -> None:
+        collector = self.observability
+        if collector is None:
+            return
+        collector.record_provider_latency(provider, operation, duration_seconds * 1000.0)
+
+    def _dependency_snapshot(self, ready: bool, component: Any) -> dict[str, Any]:
+        if component is None:
+            return {"ready": False, "status": "missing"}
+        status = "ready" if ready else "initializing"
+        return {"ready": ready, "status": status}
 
 
 RuntimeContainer = ServiceRuntime

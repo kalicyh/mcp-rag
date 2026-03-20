@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from copy import deepcopy
 from typing import List
 
 from ..context import normalize_request_context
@@ -45,6 +46,7 @@ class RetrievalService:
                 return cached
 
         hybrid = await self.runtime.ensure_hybrid_service()
+        started = self.runtime.observability._clock() if self.runtime.observability else None
         hits = await hybrid.retrieve(
             request.query,
             collection_name=request.collection,
@@ -52,6 +54,12 @@ class RetrievalService:
             limit=request.limit,
             threshold=request.threshold,
         )
+        if started is not None:
+            self.runtime.observability.record_provider_latency(
+                "retrieval",
+                "search",
+                (self.runtime.observability._clock() - started) * 1000.0,
+            )
 
         results = [
             SearchResultView(
@@ -69,7 +77,14 @@ class RetrievalService:
         if hits and self.runtime.settings.enable_llm_summary:
             try:
                 llm_model = await self.runtime.ensure_llm_model()
+                started = self.runtime.observability._clock() if self.runtime.observability else None
                 summary = await llm_model.summarize(self._build_summary_context(hits), request.query)
+                if started is not None:
+                    self.runtime.observability.record_provider_latency(
+                        "llm",
+                        "summarize",
+                        (self.runtime.observability._clock() - started) * 1000.0,
+                    )
             except Exception as exc:
                 logger.warning("LLM summary failed, falling back to raw results: %s", exc)
 
@@ -97,10 +112,17 @@ class RetrievalService:
         if request.mode == "summary" and response.summary is None:
             try:
                 llm_model = await self.runtime.ensure_llm_model()
+                started = self.runtime.observability._clock() if self.runtime.observability else None
                 response.summary = await llm_model.summarize(
                     self._build_summary_context_from_views(response.results),
                     request.query,
                 )
+                if started is not None:
+                    self.runtime.observability.record_provider_latency(
+                        "llm",
+                        "summarize_fallback",
+                        (self.runtime.observability._clock() - started) * 1000.0,
+                    )
             except Exception as exc:
                 logger.warning("Summary mode fallback failed: %s", exc)
                 response.summary = "摘要生成功能暂未启用。"

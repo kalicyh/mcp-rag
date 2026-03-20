@@ -67,13 +67,16 @@ def create_app_context(
             manager = config_manager
         resolved_settings = manager.ensure_config_file()
 
-    resolved_runtime = runtime or ServiceRuntime(settings_obj=resolved_settings)
+    resolved_observability = observability or ObservabilityCollector.from_settings(resolved_settings)
+    resolved_runtime = runtime or ServiceRuntime(settings_obj=resolved_settings, observability=resolved_observability)
+    if runtime is not None:
+        resolved_runtime.observability = resolved_observability
     context = AppContext(
         settings=resolved_settings,
         runtime=resolved_runtime,
         security_policy=security_policy or SecurityPolicy.from_settings(resolved_settings),
         rate_limiter=rate_limiter or TokenBucketRateLimiter.from_settings(resolved_settings),
-        observability=observability or ObservabilityCollector.from_settings(resolved_settings),
+        observability=resolved_observability,
         config_manager=manager,
         config_revision=manager.revision if manager is not None else 0,
     )
@@ -137,7 +140,7 @@ async def sync_app_context(context: AppContext, *, force: bool = False) -> bool:
             await reload_runtime(settings_obj)
         else:
             old_runtime = context.runtime
-            context.runtime = ServiceRuntime(settings_obj=settings_obj)
+            context.runtime = ServiceRuntime(settings_obj=settings_obj, observability=context.observability)
             context.service = None
             if old_runtime is not context.runtime and hasattr(old_runtime, "close"):
                 await old_runtime.close()
@@ -168,7 +171,7 @@ async def reload_app_context(context: AppContext, *, settings_obj: Any | None = 
             await reload_runtime(settings_obj)
         else:
             old_runtime = context.runtime
-            context.runtime = ServiceRuntime(settings_obj=settings_obj)
+            context.runtime = ServiceRuntime(settings_obj=settings_obj, observability=context.observability)
             context.service = None
             if old_runtime is not context.runtime and hasattr(old_runtime, "close"):
                 await old_runtime.close()
