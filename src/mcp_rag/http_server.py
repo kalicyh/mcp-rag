@@ -18,7 +18,6 @@ from .shell_factory import (
     health_payload,
     metrics_payload,
     ready_payload,
-    request_api_key,
     request_subject,
     resolve_shell_service,
 )
