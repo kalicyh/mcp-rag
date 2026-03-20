@@ -182,9 +182,7 @@ class ConfigManager:
             except Exception as e:
                 print(f"Failed to load config from {self.config_file}: {e}")
                 return Settings()
-        default_settings = Settings()
-        self._save_settings(default_settings)
-        return default_settings
+        return Settings()
 
     def _set_settings(self, settings_obj: Settings) -> Settings:
         self._settings = settings_obj

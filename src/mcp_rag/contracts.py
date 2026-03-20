@@ -20,21 +20,13 @@ class DocumentRequest:
 
     def __post_init__(self) -> None:
         self.tenant = normalize_tenant(self.tenant, base_collection=self.collection)
-        self.collection = self.tenant.base_collection
         self.context = normalize_request_context(
             self.context,
             tenant=self.tenant,
             base_collection=self.collection,
+            operation="add_document",
         )
-        self.tenant = self.context.tenant
-
-    def __post_init__(self) -> None:
-        self.tenant = normalize_tenant(self.tenant, base_collection=self.collection)
-        self.context = normalize_request_context(
-            self.context,
-            tenant=self.tenant,
-            base_collection=self.collection,
-        )
+        self.collection = self.context.tenant.base_collection
         self.tenant = self.context.tenant
 
 
@@ -52,21 +44,13 @@ class SearchRequest:
 
     def __post_init__(self) -> None:
         self.tenant = normalize_tenant(self.tenant, base_collection=self.collection)
-        self.collection = self.tenant.base_collection
         self.context = normalize_request_context(
             self.context,
             tenant=self.tenant,
             base_collection=self.collection,
+            operation="search",
         )
-        self.tenant = self.context.tenant
-
-    def __post_init__(self) -> None:
-        self.tenant = normalize_tenant(self.tenant, base_collection=self.collection)
-        self.context = normalize_request_context(
-            self.context,
-            tenant=self.tenant,
-            base_collection=self.collection,
-        )
+        self.collection = self.context.tenant.base_collection
         self.tenant = self.context.tenant
 
 
@@ -82,21 +66,13 @@ class ChatRequest:
 
     def __post_init__(self) -> None:
         self.tenant = normalize_tenant(self.tenant, base_collection=self.collection)
-        self.collection = self.tenant.base_collection
         self.context = normalize_request_context(
             self.context,
             tenant=self.tenant,
             base_collection=self.collection,
+            operation="chat",
         )
-        self.tenant = self.context.tenant
-
-    def __post_init__(self) -> None:
-        self.tenant = normalize_tenant(self.tenant, base_collection=self.collection)
-        self.context = normalize_request_context(
-            self.context,
-            tenant=self.tenant,
-            base_collection=self.collection,
-        )
+        self.collection = self.context.tenant.base_collection
         self.tenant = self.context.tenant
 
 
@@ -111,21 +87,13 @@ class DeleteRequest:
 
     def __post_init__(self) -> None:
         self.tenant = normalize_tenant(self.tenant, base_collection=self.collection)
-        self.collection = self.tenant.base_collection
         self.context = normalize_request_context(
             self.context,
             tenant=self.tenant,
             base_collection=self.collection,
+            operation="delete",
         )
-        self.tenant = self.context.tenant
-
-    def __post_init__(self) -> None:
-        self.tenant = normalize_tenant(self.tenant, base_collection=self.collection)
-        self.context = normalize_request_context(
-            self.context,
-            tenant=self.tenant,
-            base_collection=self.collection,
-        )
+        self.collection = self.context.tenant.base_collection
         self.tenant = self.context.tenant
 
 

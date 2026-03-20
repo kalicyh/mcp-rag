@@ -65,7 +65,7 @@ def create_app_context(
     if resolved_settings is None:
         if manager is None:
             manager = config_manager
-        resolved_settings = manager.settings
+        resolved_settings = manager.ensure_config_file()
 
     resolved_runtime = runtime or ServiceRuntime(settings_obj=resolved_settings)
     context = AppContext(
@@ -316,6 +316,7 @@ def build_http_request_context(
     user_id: int | None = None,
     agent_id: int | None = None,
     api_key: str | None = None,
+    operation: str = "request",
     subject: str | None = None,
 ) -> RequestContext:
     """Build and attach the canonical request context for an HTTP request."""
@@ -327,6 +328,7 @@ def build_http_request_context(
         user_id=user_id,
         agent_id=agent_id,
         api_key=request_api_key(request, api_key),
+        operation=operation,
         subject=subject,
     )
     request.state.request_context = request_context
@@ -343,6 +345,7 @@ def build_mcp_request_context(
     user_id: int | None = None,
     agent_id: int | None = None,
     api_key: str | None = None,
+    operation: str = "mcp",
     subject: str | None = None,
 ) -> RequestContext:
     """Build the canonical request context for an MCP tool call."""
@@ -354,6 +357,7 @@ def build_mcp_request_context(
         user_id=user_id,
         agent_id=agent_id,
         api_key=api_key,
+        operation=operation,
         subject=subject,
     )
 

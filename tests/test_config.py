@@ -19,6 +19,10 @@ class ConfigManagerTests(unittest.TestCase):
             self.assertEqual(settings.http_port, 8060)
             self.assertFalse(config_path.exists())
 
+            persisted = manager.ensure_config_file()
+            self.assertEqual(persisted.http_port, 8060)
+            self.assertTrue(config_path.exists())
+
     def test_nested_guardrail_settings_round_trip(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             config_path = Path(tmpdir) / "config.json"
@@ -59,6 +63,21 @@ class ConfigManagerTests(unittest.TestCase):
 
             self.assertEqual(reloaded.http_port, 9002)
             self.assertFalse(reloaded.security.enabled)
+
+    def test_reload_if_changed_picks_up_external_config_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.json"
+            manager = ConfigManager(config_file=str(config_path))
+            manager.ensure_config_file()
+
+            payload = manager.get_all_settings()
+            payload["http_port"] = 9901
+            config_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+            reloaded = manager.reload_if_changed()
+
+            self.assertIsNotNone(reloaded)
+            self.assertEqual(manager.settings.http_port, 9901)
 
 
 if __name__ == "__main__":

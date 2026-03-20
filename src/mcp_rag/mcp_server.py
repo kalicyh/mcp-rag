@@ -16,6 +16,7 @@ from .shell_factory import (
     enforce_guardrails,
     get_default_shell_context,
     resolve_shell_service,
+    sync_app_context,
     tenant_subject,
 )
 from .security import AuthenticationError, AuthorizationError, RateLimitExceededError
@@ -108,6 +109,14 @@ class MCPServer:
                                 "type": "string",
                                 "description": "Optional API key for stdio clients",
                             },
+                            "request_id": {
+                                "type": "string",
+                                "description": "Optional request id for tracing",
+                            },
+                            "trace_id": {
+                                "type": "string",
+                                "description": "Optional trace id for distributed tracing",
+                            },
                         },
                         "required": ["query"],
                     },
@@ -146,16 +155,18 @@ class MCPServer:
                 user_id=arguments.get("user_id", arguments.get("_user_id")),
                 agent_id=arguments.get("agent_id", arguments.get("_agent_id")),
                 api_key=arguments.get("api_key"),
+                operation="rag_ask",
                 subject=tenant_subject(tenant, fallback=str(arguments.get("api_key", "") or "mcp")),
             )
 
             logger.info("开始处理RAG检索请求: %s", query)
             request = self._request_adapter()
+            await sync_app_context(self.shell_context)
             with self.shell_context.observability.timer("mcp.rag_ask"):
                 enforce_guardrails(
                     self.shell_context,
                     request_context=request_context,
-                    )
+                )
                 service = await get_rag_service(request)
                 response = await service.ask(
                     SearchRequest(
@@ -209,6 +220,7 @@ class MCPServer:
         logger.info("启动MCP-RAG stdio服务器...")
         try:
             logger.info("初始化组件...")
+            await sync_app_context(self.shell_context, force=True)
             await get_rag_service(self._request_adapter())
             self.shell_context.bootstrapped = True
             logger.info("组件初始化完成")

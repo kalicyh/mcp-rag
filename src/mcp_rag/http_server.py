@@ -15,6 +15,7 @@ from .contracts import ChatRequest, DocumentRequest, SearchRequest, normalize_te
 from .shell_factory import (
     build_http_request_context,
     create_http_app,
+    ensure_app_context_current,
     enforce_http_guardrails,
     get_default_shell_context,
     health_payload,
@@ -74,6 +75,7 @@ app.mount("/sse", _streamable_http_asgi, name="sse")
 
 @app.middleware("http")
 async def _request_identity_middleware(request: Request, call_next):
+    await ensure_app_context_current(request)
     request_id = (request.headers.get("x-request-id") or "").strip() or uuid4().hex
     trace_id = (request.headers.get("x-trace-id") or "").strip()
     if not trace_id:
@@ -97,6 +99,7 @@ async def get_rag_service(request: Request):
 
 @app.on_event("startup")
 async def _start_streamable_http_manager():
+    await reload_shell_context(app.state.shell_context)
     app.state.shell_context.bootstrapped = True
     manager = _build_streamable_http_manager()
     app.state.streamable_http_manager = manager
