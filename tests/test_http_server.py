@@ -162,6 +162,7 @@ class HttpServerFacadeTests(unittest.TestCase):
             rate_limiter=TokenBucketRateLimiter(limit=1, window_seconds=60),
             observability=ObservabilityCollector(),
         )
+        context.bootstrapped = True
         self._set_context(context)
 
         ready = self.client.get("/ready")
