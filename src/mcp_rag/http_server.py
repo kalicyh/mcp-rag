@@ -94,24 +94,6 @@ class DocumentAdd(BaseModel):
     agent_id: Optional[int] = None
 
 
-class FileUploadResponse(BaseModel):
-    """File upload response model."""
-    filename: str
-    file_type: str
-    content_length: int
-    processed: bool
-    error: str = ""
-    preview: str = ""
-
-
-class BatchUploadResponse(BaseModel):
-    """Batch file upload response model."""
-    total_files: int
-    successful: int
-    failed: int
-    results: List[FileUploadResponse]
-
-
 class DeleteDocumentRequest(BaseModel):
     """Delete document request model."""
     document_id: str
