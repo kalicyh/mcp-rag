@@ -18,6 +18,7 @@ class ConfigManagerTests(unittest.TestCase):
 
             self.assertEqual(settings.http_port, 8060)
             self.assertFalse(config_path.exists())
+
             persisted = manager.ensure_config_file()
             self.assertEqual(persisted.http_port, 8060)
             self.assertTrue(config_path.exists())
