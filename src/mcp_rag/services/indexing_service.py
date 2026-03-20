@@ -59,6 +59,7 @@ class IndexingService:
             collection_name=request.collection,
         )
         await self.runtime.refresh_keywords(request.collection, tenant)
+        await self.runtime.invalidate_retrieval_cache(collection=request.collection, tenant=tenant)
 
         return {
             "message": "Document added successfully",
@@ -111,6 +112,7 @@ class IndexingService:
         indexed_documents = 0
         indexed_chunks = 0
         indexed_chars = 0
+        cache_dirty = False
         for upload in files:
             temp_path: Path | None = None
             try:
@@ -153,6 +155,7 @@ class IndexingService:
                     collection_name=tenant_spec.base_collection,
                 )
                 await self.runtime.refresh_keywords(tenant_spec.base_collection, tenant_spec.to_core())
+                cache_dirty = True
                 indexed_documents = next_document_count
                 indexed_chunks = next_chunk_count
                 indexed_chars = next_total_chars
@@ -186,6 +189,12 @@ class IndexingService:
             finally:
                 if temp_path is not None and temp_path.exists():
                     temp_path.unlink(missing_ok=True)
+
+        if cache_dirty:
+            await self.runtime.invalidate_retrieval_cache(
+                collection=tenant_spec.base_collection,
+                tenant=tenant_spec.to_core(),
+            )
 
         return BatchUploadResponse(
             total_files=len(files),
@@ -283,6 +292,7 @@ class IndexingService:
         )
         if deleted:
             await self.runtime.refresh_keywords(collection, tenant_spec.to_core())
+            await self.runtime.invalidate_retrieval_cache(collection=collection, tenant=tenant_spec.to_core())
         return deleted
 
     async def delete_file(
@@ -305,6 +315,8 @@ class IndexingService:
             tenant=tenant_spec.to_core(),
         )
         await self.runtime.refresh_keywords(collection, tenant_spec.to_core())
+        if result:
+            await self.runtime.invalidate_retrieval_cache(collection=collection, tenant=tenant_spec.to_core())
         return result
 
     async def _delete_document_identifier(

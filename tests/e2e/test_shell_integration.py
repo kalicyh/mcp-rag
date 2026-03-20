@@ -16,6 +16,9 @@ from mcp_rag.shell_factory import create_shell_context
 
 
 class _FakeEmbeddingModel:
+    def __init__(self) -> None:
+        self.single_calls: list[str] = []
+
     async def initialize(self) -> None:
         return None
 
@@ -23,6 +26,7 @@ class _FakeEmbeddingModel:
         return [self._vectorize(text) for text in texts]
 
     async def encode_single(self, text: str):
+        self.single_calls.append(text)
         return self._vectorize(text)
 
     def _vectorize(self, text: str) -> list[float]:
@@ -53,11 +57,13 @@ class ShellIntegrationE2ETests(unittest.IsolatedAsyncioTestCase):
         settings = Settings().model_copy(
             update={
                 "chroma_persist_directory": self.temp_dir.name,
+                "enable_cache": True,
                 "enable_llm_summary": True,
                 "max_retrieval_results": 5,
             }
         )
         embedding_model = _FakeEmbeddingModel()
+        self.embedding_model = embedding_model
         vector_store = ChromaVectorStore(
             persist_directory=self.temp_dir.name,
             embedding_model=embedding_model,
@@ -114,6 +120,15 @@ class ShellIntegrationE2ETests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(search_payload["results"]), 1)
         self.assertEqual(search_payload["results"][0]["filename"], "fastapi.txt")
         self.assertEqual(search_payload["summary"], "summary for FastAPI")
+        self.assertEqual(self.context.runtime.get_retrieval_cache().snapshot()["entries"], 1)
+
+        second_search = self.client.get(
+            "/search",
+            headers={"x-api-key": "secret"},
+            params={"query": "FastAPI", "collection": "docs", "limit": 3},
+        )
+        self.assertEqual(second_search.status_code, 200)
+        self.assertEqual(len(self.embedding_model.single_calls), 1)
 
         chat = self.client.post(
             "/chat",
@@ -135,11 +150,29 @@ class ShellIntegrationE2ETests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("找到 1 个相关文档", mcp_result[0].text)
         self.assertIn("summary for FastAPI", mcp_result[0].text)
 
+        delete_file = self.client.request(
+            "DELETE",
+            "/delete-file",
+            headers={"x-api-key": "secret"},
+            json={"filename": "fastapi.txt", "collection": "docs"},
+        )
+        self.assertEqual(delete_file.status_code, 200)
+        self.assertEqual(self.context.runtime.get_retrieval_cache().snapshot()["entries"], 0)
+
+        after_delete = self.client.get(
+            "/search",
+            headers={"x-api-key": "secret"},
+            params={"query": "FastAPI", "collection": "docs", "limit": 3},
+        )
+        self.assertEqual(after_delete.status_code, 200)
+        self.assertEqual(after_delete.json()["results"], [])
+        self.assertEqual(len(self.embedding_model.single_calls), 4)
+
         metrics = self.client.get("/metrics")
         self.assertEqual(metrics.status_code, 200)
         metrics_payload = metrics.json()["metrics"]
-        self.assertGreaterEqual(metrics_payload["total_requests"], 3)
+        self.assertGreaterEqual(metrics_payload["total_requests"], 6)
         self.assertGreaterEqual(metrics_payload["operations"]["upload_files"]["count"], 1)
-        self.assertGreaterEqual(metrics_payload["operations"]["search"]["count"], 1)
+        self.assertGreaterEqual(metrics_payload["operations"]["search"]["count"], 3)
         self.assertGreaterEqual(metrics_payload["operations"]["chat"]["count"], 1)
         self.assertGreaterEqual(self.context.observability.snapshot().operations["mcp.rag_ask"].count, 1)

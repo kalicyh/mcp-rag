@@ -1,17 +1,19 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
 from unittest.mock import AsyncMock
-import tempfile
 
 from fastapi.testclient import TestClient
 
 import mcp_rag.http_server as http_server_module
 from mcp_rag.config import ConfigManager
 from mcp_rag.contracts import ChatResponse, SearchResponse, SearchResultView
-from mcp_rag.http_server import app
+from mcp_rag.http_server import ConfigUpdate, app
 from mcp_rag.observability import ObservabilityCollector
 from mcp_rag.security import SecurityPolicy, TokenBucketRateLimiter
+from mcp_rag.services import ServiceRuntime
+from mcp_rag.services.retrieval_cache import RetrievalCacheKey
 from mcp_rag.shell_factory import create_shell_context
 
 
@@ -246,6 +248,63 @@ class HttpServerFacadeTests(unittest.TestCase):
             self.assertEqual(app.state.shell_context.settings.rate_limit.requests_per_window, 9)
             self.assertEqual(app.state.shell_context.rate_limiter.limit, 9)
             self.assertEqual(app.state.shell_context.rate_limiter.window_seconds, 30.0)
+
+    def test_config_update_invalidates_runtime_retrieval_cache(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manager = ConfigManager(config_file=f"{tmpdir}/config.json")
+            manager.update_setting("enable_cache", True)
+            runtime = ServiceRuntime(settings_obj=manager.settings)
+            context = create_shell_context(
+                runtime=runtime,
+                settings_obj=runtime.settings,
+                config_manager_obj=manager,
+            )
+            context.bootstrapped = True
+            self._set_context(context)
+
+            original_manager = http_server_module.config_manager
+            http_server_module.config_manager = manager
+            try:
+                cache = runtime.get_retrieval_cache()
+                key = RetrievalCacheKey(
+                    base_collection="docs",
+                    user_id=7,
+                    agent_id=None,
+                    actual_collection="u7_docs",
+                    query="fastapi",
+                    mode="raw",
+                    limit=3,
+                    threshold=0.7,
+                    summary_enabled=False,
+                    rerank_enabled=False,
+                    retrieval_window=5,
+                )
+                cache.set(
+                    key,
+                    SearchResponse(
+                        query="fastapi",
+                        collection="docs",
+                        results=[
+                            SearchResultView(
+                                content="cached",
+                                score=0.9,
+                                metadata={},
+                                source="guide.md",
+                                filename="guide.md",
+                            )
+                        ],
+                    ),
+                )
+
+                response = self.client.post("/config", json=ConfigUpdate(key="enable_reranker", value=True).model_dump())
+
+                self.assertEqual(response.status_code, 200)
+                self.assertTrue(response.json()["reloaded"])
+                self.assertIsNotNone(runtime.get_retrieval_cache())
+                self.assertEqual(runtime.get_retrieval_cache().snapshot()["entries"], 0)
+                self.assertTrue(runtime.settings.enable_reranker)
+            finally:
+                http_server_module.config_manager = original_manager
 
 
 if __name__ == "__main__":

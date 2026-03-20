@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from threading import Lock
 from typing import Any
 
 from ..config import settings
@@ -15,8 +16,10 @@ from ..core.indexing import (
     SentenceTransformerEmbeddingModel,
 )
 from ..core.indexing.models import TenantContext as CoreTenantContext
+from ..core.indexing.tenancy import resolve_collection_name
 from ..llm import get_llm_model
 from ..retrieval import HybridRetrievalService
+from .retrieval_cache import RetrievalCache, build_scope_token
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +56,8 @@ class ServiceRuntime:
         self._hybrid_lock = asyncio.Lock()
         self._llm_lock = asyncio.Lock()
         self._reload_lock = asyncio.Lock()
+        self._retrieval_cache: RetrievalCache | None = None
+        self._retrieval_cache_lock = Lock()
 
     async def ensure_document_processor(self) -> DocumentProcessor:
         if self._document_processor is not None and self._document_ready:
@@ -119,6 +124,38 @@ class ServiceRuntime:
         self._llm_ready = True
         return self._llm_model
 
+    def get_retrieval_cache(self) -> RetrievalCache | None:
+        cache_settings = getattr(self.settings, "cache", None)
+        enabled = bool(getattr(cache_settings, "enabled", False) or getattr(self.settings, "enable_cache", False))
+        if not enabled:
+            return None
+
+        if self._retrieval_cache is None:
+            with self._retrieval_cache_lock:
+                if self._retrieval_cache is None:
+                    self._retrieval_cache = RetrievalCache()
+        return self._retrieval_cache
+
+    async def invalidate_retrieval_cache(self, *, collection: str, tenant: CoreTenantContext) -> int:
+        cache = self._retrieval_cache
+        if cache is None:
+            return 0
+
+        actual_collection = resolve_collection_name(collection, tenant=tenant)
+        scope_token = build_scope_token(
+            actual_collection=actual_collection,
+            base_collection=tenant.base_collection or collection,
+            user_id=tenant.user_id,
+            agent_id=tenant.agent_id,
+        )
+        return cache.invalidate_scope(scope_token=scope_token)
+
+    async def invalidate_all_retrieval_cache(self) -> int:
+        cache = self._retrieval_cache
+        if cache is None:
+            return 0
+        return cache.invalidate_all()
+
     async def reload_settings(self, settings_obj) -> None:
         """Swap runtime settings and reset cached providers when needed."""
 
@@ -126,6 +163,7 @@ class ServiceRuntime:
             previous_embedding_signature = self._embedding_signature()
             previous_runtime_signature = self._runtime_signature()
             previous_llm_signature = self._llm_signature()
+            previous_retrieval_signature = self._retrieval_signature()
 
             self.settings = settings_obj
 
@@ -145,6 +183,20 @@ class ServiceRuntime:
                 await self._close_component(self._llm_model)
                 self._llm_model = None
                 self._llm_ready = False
+
+            if self._hybrid_service is not None:
+                self._hybrid_service.rerank_enabled = bool(getattr(settings_obj, "enable_reranker", False))
+                self._hybrid_service.candidate_pool_size = max(
+                    10,
+                    int(getattr(settings_obj, "max_retrieval_results", 5) or 5),
+                )
+
+            cache_settings = getattr(settings_obj, "cache", None)
+            cache_enabled = bool(getattr(cache_settings, "enabled", False) or getattr(settings_obj, "enable_cache", False))
+            if not cache_enabled:
+                self._retrieval_cache = None
+            elif previous_retrieval_signature != self._retrieval_signature():
+                await self.invalidate_all_retrieval_cache()
 
     def build_indexing_settings(self) -> IndexingSettings:
         provider = (self.settings.embedding_provider or "zhipu").lower()
@@ -230,6 +282,18 @@ class ServiceRuntime:
             getattr(self.settings, "llm_base_url", ""),
             getattr(self.settings, "llm_api_key", None),
             bool(getattr(self.settings, "enable_thinking", True)),
+        )
+
+    def _retrieval_signature(self) -> tuple[Any, ...]:
+        cache_settings = getattr(self.settings, "cache", None)
+        return (
+            bool(getattr(cache_settings, "enabled", False) or getattr(self.settings, "enable_cache", False)),
+            bool(getattr(self.settings, "enable_reranker", False)),
+            int(getattr(self.settings, "max_retrieval_results", 5) or 5),
+            float(getattr(self.settings, "similarity_threshold", 0.7) or 0.7),
+            bool(getattr(self.settings, "enable_llm_summary", False)),
+            str(getattr(self.settings, "llm_provider", "doubao") or "doubao").lower(),
+            getattr(self.settings, "llm_model", ""),
         )
 
     async def _close_component(self, component: Any) -> None:

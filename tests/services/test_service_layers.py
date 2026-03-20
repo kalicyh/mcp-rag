@@ -35,6 +35,7 @@ class _FakeSettings:
     embedding_cache_dir: str | None = None
     provider_configs: dict[str, _FakeProviderConfig] = None  # type: ignore[assignment]
     enable_llm_summary: bool = True
+    enable_cache: bool = False
     max_retrieval_results: int = 5
     enable_reranker: bool = False
     quotas: _FakeQuotas | None = None
@@ -461,7 +462,7 @@ class IndexingServiceTests(unittest.IsolatedAsyncioTestCase):
 
 class RetrievalAndChatServiceTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        self.settings = _FakeSettings(enable_llm_summary=True)
+        self.settings = _FakeSettings(enable_llm_summary=True, enable_cache=True)
         self.processor = _FakeDocumentProcessor()
         self.embedding = _FakeEmbeddingModel()
         self.vector_store = _FakeVectorStore()
@@ -477,6 +478,7 @@ class RetrievalAndChatServiceTests(unittest.IsolatedAsyncioTestCase):
         )
         self.retrieval = RetrievalService(self.runtime)
         self.chat = ChatService(self.runtime, self.retrieval)
+        self.indexing = IndexingService(self.runtime)
 
     async def test_search_and_chat_use_runtime_dependencies(self):
         search = await self.retrieval.search(
@@ -493,6 +495,18 @@ class RetrievalAndChatServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(search.results[0].source, "guide.md")
         self.assertEqual(self.hybrid.calls[0][1], "docs")
 
+        cached = await self.retrieval.search(
+            SearchRequest(
+                query="fastapi",
+                collection="docs",
+                limit=3,
+                tenant=TenantSpec(base_collection="docs", user_id=7),
+            )
+        )
+        self.assertEqual(cached.summary, "summary for fastapi")
+        self.assertEqual(len(self.hybrid.calls), 1)
+        self.assertEqual(len(self.llm.summarize_calls), 1)
+
         chat = await self.chat.chat(
             ChatRequest(
                 query="What is FastAPI?",
@@ -505,9 +519,50 @@ class RetrievalAndChatServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(chat.sources[0].filename, "guide.md")
         self.assertTrue(self.llm.generate_calls)
 
+    async def test_cache_key_isolated_by_scope_and_request_shape(self):
+        request = SearchRequest(
+            query="fastapi",
+            collection="docs",
+            limit=3,
+            threshold=0.7,
+            tenant=TenantSpec(base_collection="docs", user_id=7),
+        )
+        await self.retrieval.search(request)
+        await self.retrieval.search(request)
+        self.assertEqual(len(self.hybrid.calls), 1)
+
+        await self.retrieval.search(
+            SearchRequest(
+                query="fastapi",
+                collection="docs",
+                limit=4,
+                threshold=0.7,
+                tenant=TenantSpec(base_collection="docs", user_id=7),
+            )
+        )
+        await self.retrieval.search(
+            SearchRequest(
+                query="fastapi",
+                collection="docs",
+                limit=3,
+                threshold=0.5,
+                tenant=TenantSpec(base_collection="docs", user_id=7),
+            )
+        )
+        await self.retrieval.search(
+            SearchRequest(
+                query="fastapi",
+                collection="docs",
+                limit=3,
+                threshold=0.7,
+                tenant=TenantSpec(base_collection="docs", user_id=8),
+            )
+        )
+        self.assertEqual(len(self.hybrid.calls), 4)
+
     async def test_ask_falls_back_when_summary_generation_fails(self):
         fallback_runtime = ServiceRuntime(
-            settings_obj=_FakeSettings(enable_llm_summary=False),
+            settings_obj=_FakeSettings(enable_llm_summary=False, enable_cache=True),
             document_processor=self.processor,
             embedding_model=self.embedding,
             vector_store=self.vector_store,
@@ -526,6 +581,61 @@ class RetrievalAndChatServiceTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(response.summary, "摘要生成功能暂未启用。")
+
+    async def test_summary_mode_fallback_is_cached(self):
+        llm = _FakeLLM()
+        fallback_runtime = ServiceRuntime(
+            settings_obj=_FakeSettings(enable_llm_summary=False, enable_cache=True),
+            document_processor=self.processor,
+            embedding_model=self.embedding,
+            vector_store=self.vector_store,
+            hybrid_service=self.hybrid,
+            llm_model=llm,
+        )
+        fallback_service = RetrievalService(fallback_runtime)
+        request = SearchRequest(
+            query="fastapi",
+            collection="docs",
+            mode="summary",
+            tenant=TenantSpec(base_collection="docs", user_id=7),
+        )
+
+        first = await fallback_service.ask(request)
+        second = await fallback_service.ask(request)
+
+        self.assertEqual(first.summary, "summary for fastapi")
+        self.assertEqual(second.summary, "summary for fastapi")
+        self.assertEqual(len(self.hybrid.calls), 1)
+        self.assertEqual(len(llm.summarize_calls), 1)
+
+    async def test_indexing_writes_invalidate_cached_search_scope(self):
+        request = SearchRequest(
+            query="fastapi",
+            collection="docs",
+            tenant=TenantSpec(base_collection="docs", user_id=7),
+        )
+        await self.retrieval.search(request)
+        await self.retrieval.search(request)
+        self.assertEqual(len(self.hybrid.calls), 1)
+
+        await self.indexing.add_document(
+            DocumentRequest(
+                content="fresh content",
+                collection="docs",
+                metadata={"title": "New"},
+                tenant=TenantSpec(base_collection="docs", user_id=7),
+            )
+        )
+        await self.retrieval.search(request)
+        self.assertEqual(len(self.hybrid.calls), 2)
+
+        await self.indexing.delete_file(
+            filename="sample.txt",
+            collection="docs",
+            tenant=TenantSpec(base_collection="docs", user_id=7),
+        )
+        await self.retrieval.search(request)
+        self.assertEqual(len(self.hybrid.calls), 3)
 
 
 if __name__ == "__main__":

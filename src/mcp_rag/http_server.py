@@ -31,6 +31,19 @@ from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 
 logger = logging.getLogger(__name__)
 
+_RETRIEVAL_CONFIG_KEYS = {
+    "cache",
+    "embedding_provider",
+    "enable_cache",
+    "enable_llm_summary",
+    "enable_reranker",
+    "llm_model",
+    "llm_provider",
+    "max_retrieval_results",
+    "provider_configs",
+    "similarity_threshold",
+}
+
 app = create_http_app(context=get_default_shell_context())
 
 # Mount static files
@@ -95,6 +108,11 @@ async def get_rag_service(request: Request):
     """Compatibility wrapper used by unit tests and the shell routes."""
 
     return await resolve_shell_service(request)
+
+
+def _config_affects_retrieval(*keys: str) -> bool:
+    normalized = {str(key).split(".", 1)[0] for key in keys if key}
+    return bool(normalized & _RETRIEVAL_CONFIG_KEYS)
 
 
 @app.on_event("startup")
@@ -1793,6 +1811,8 @@ async def update_config(config: ConfigUpdate, request: Request):
         if not success:
             raise HTTPException(status_code=400, detail=f"Failed to update config {config.key}")
         await reload_shell_context(context, settings_obj=config_manager.settings)
+        if _config_affects_retrieval(config.key):
+            await context.runtime.invalidate_all_retrieval_cache()
         return {"message": f"Config {config.key} updated successfully", "reloaded": True}
 
 
@@ -1807,6 +1827,8 @@ async def update_config_bulk(config: BulkConfigUpdate, request: Request):
         if not success:
             raise HTTPException(status_code=400, detail="Failed to update config")
         await reload_shell_context(context, settings_obj=config_manager.settings)
+        if _config_affects_retrieval(*config.updates.keys()):
+            await context.runtime.invalidate_all_retrieval_cache()
         return {"message": "Config updated successfully", "reloaded": True}
 
 
@@ -1821,6 +1843,7 @@ async def reset_config(request: Request):
         if not success:
             raise HTTPException(status_code=400, detail="Failed to reset config")
         await reload_shell_context(context, settings_obj=config_manager.settings)
+        await context.runtime.invalidate_all_retrieval_cache()
         return {"message": "Config reset to defaults successfully", "reloaded": True}
 
 
@@ -1833,6 +1856,7 @@ async def reload_config(request: Request):
         enforce_http_guardrails(request, request_context=request_context)
         settings_obj = config_manager.reload()
         await reload_shell_context(context, settings_obj=settings_obj)
+        await context.runtime.invalidate_all_retrieval_cache()
         return {"message": "Config reloaded successfully", "reloaded": True}
 
 
