@@ -1,12 +1,13 @@
 """HTTP server for MCP-RAG configuration and document management."""
 
+from contextlib import asynccontextmanager
 import logging
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 from uuid import uuid4
 from fastapi import HTTPException, UploadFile, File, Form, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from starlette.responses import PlainTextResponse
 
@@ -34,24 +35,22 @@ logger = logging.getLogger(__name__)
 _RETRIEVAL_CONFIG_KEYS = {
     "cache",
     "embedding_provider",
+    "embedding_fallback_provider",
     "enable_cache",
     "enable_llm_summary",
     "enable_reranker",
     "llm_model",
     "llm_provider",
+    "llm_fallback_provider",
     "max_retrieval_results",
+    "provider_budget",
     "provider_configs",
     "similarity_threshold",
 }
 
-app = create_http_app(context=get_default_shell_context())
-
-# Mount static files
-static_path = Path(__file__).parent / "static"
-static_path.mkdir(exist_ok=True)
-app.mount("/static", StaticFiles(directory=str(static_path)), name="static")
-
-def _build_streamable_http_manager() -> StreamableHTTPSessionManager:
+def _build_streamable_http_manager(*, shell_context=None) -> StreamableHTTPSessionManager:
+    if shell_context is not None:
+        mcp_server.shell_context = shell_context
     return StreamableHTTPSessionManager(
         app=mcp_server.server,
         json_response=True,
@@ -62,9 +61,30 @@ def _build_streamable_http_manager() -> StreamableHTTPSessionManager:
 def _get_streamable_http_manager() -> StreamableHTTPSessionManager:
     manager = getattr(app.state, "streamable_http_manager", None)
     if manager is None:
-        manager = _build_streamable_http_manager()
-        app.state.streamable_http_manager = manager
+        raise RuntimeError("Streamable HTTP transport is not running")
     return manager
+
+
+@asynccontextmanager
+async def _app_lifespan(lifespan_app):
+    await reload_shell_context(lifespan_app.state.shell_context)
+    lifespan_app.state.shell_context.bootstrapped = True
+
+    manager = _build_streamable_http_manager(shell_context=lifespan_app.state.shell_context)
+    lifespan_app.state.streamable_http_manager = manager
+    async with manager.run():
+        try:
+            yield
+        finally:
+            lifespan_app.state.streamable_http_manager = None
+
+
+app = create_http_app(context=get_default_shell_context(), lifespan=_app_lifespan)
+
+# Mount static files
+static_path = Path(__file__).parent / "static"
+static_path.mkdir(exist_ok=True)
+app.mount("/static", StaticFiles(directory=str(static_path)), name="static")
 
 
 async def _streamable_http_asgi(scope, receive, send):
@@ -113,27 +133,6 @@ async def get_rag_service(request: Request):
 def _config_affects_retrieval(*keys: str) -> bool:
     normalized = {str(key).split(".", 1)[0] for key in keys if key}
     return bool(normalized & _RETRIEVAL_CONFIG_KEYS)
-
-
-@app.on_event("startup")
-async def _start_streamable_http_manager():
-    await reload_shell_context(app.state.shell_context)
-    app.state.shell_context.bootstrapped = True
-    manager = _build_streamable_http_manager()
-    app.state.streamable_http_manager = manager
-    context = manager.run()
-    app.state.streamable_http_context = context
-    try:
-        await context.__aenter__()
-    except Exception:
-        logger.exception("Failed to start Streamable HTTP session manager")
-        raise
-
-
-@app.on_event("shutdown")
-async def _stop_streamable_http_manager():
-    app.state.streamable_http_context = None
-    app.state.streamable_http_manager = None
 
 
 class ConfigUpdate(BaseModel):
@@ -196,7 +195,8 @@ async def health(request: Request):
 @app.get("/ready")
 async def ready(request: Request):
     """Readiness signal for shell wiring."""
-    return ready_payload(request.app.state.shell_context)
+    payload = ready_payload(request.app.state.shell_context)
+    return JSONResponse(status_code=200 if payload["ready"] else 503, content=payload)
 
 
 @app.get("/metrics")

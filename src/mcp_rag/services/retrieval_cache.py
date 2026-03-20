@@ -89,9 +89,17 @@ class RetrievalCacheEntry:
 
 
 class RetrievalCache:
-    """Thread-safe in-memory cache with scope and global invalidation."""
+    """Thread-safe in-memory cache with scope invalidation and TTL."""
 
-    def __init__(self, *, clock: Callable[[], float] = monotonic):
+    def __init__(
+        self,
+        *,
+        max_entries: int = 256,
+        ttl_seconds: int = 300,
+        clock: Callable[[], float] = monotonic,
+    ):
+        self.max_entries = max(1, int(max_entries))
+        self.ttl_seconds = max(1, int(ttl_seconds))
         self._clock = clock
         self._entries: dict[RetrievalCacheKey, RetrievalCacheEntry] = {}
         self._scope_index: dict[str, set[RetrievalCacheKey]] = {}
@@ -102,6 +110,13 @@ class RetrievalCache:
         self._writes = 0
         self._evictions = 0
         self._lock = RLock()
+
+    def reconfigure(self, *, max_entries: int, ttl_seconds: int) -> None:
+        with self._lock:
+            self.max_entries = max(1, int(max_entries))
+            self.ttl_seconds = max(1, int(ttl_seconds))
+            self._purge_expired_unlocked()
+            self._enforce_capacity_unlocked()
 
     def generation_for(self, key: RetrievalCacheKey) -> CacheGeneration:
         with self._lock:
@@ -115,7 +130,7 @@ class RetrievalCache:
                 return None
 
             current_generation = self._current_generation_unlocked(key.scope_token)
-            if entry.generation != current_generation:
+            if entry.generation != current_generation or self._is_expired(entry):
                 self._discard_key_unlocked(key)
                 self._misses += 1
                 return None
@@ -142,6 +157,7 @@ class RetrievalCache:
             )
             self._scope_index.setdefault(key.scope_token, set()).add(key)
             self._writes += 1
+            self._enforce_capacity_unlocked()
             return True
 
     def invalidate_scope(self, *, scope_token: str) -> int:
@@ -170,6 +186,8 @@ class RetrievalCache:
                 "writes": self._writes,
                 "evictions": self._evictions,
                 "global_generation": self._global_generation,
+                "max_entries": self.max_entries,
+                "ttl_seconds": self.ttl_seconds,
             }
 
     def _current_generation_unlocked(self, scope_token: str) -> CacheGeneration:
@@ -189,3 +207,22 @@ class RetrievalCache:
         for key in keys:
             self._entries.pop(key, None)
         return len(keys)
+
+    def _enforce_capacity_unlocked(self) -> None:
+        overflow = len(self._entries) - self.max_entries
+        if overflow <= 0:
+            return
+
+        stale_keys = sorted(self._entries.items(), key=lambda item: item[1].created_at)[:overflow]
+        for key, _entry in stale_keys:
+            self._discard_key_unlocked(key)
+        self._evictions += len(stale_keys)
+
+    def _is_expired(self, entry: RetrievalCacheEntry) -> bool:
+        return (self._clock() - entry.created_at) >= float(self.ttl_seconds)
+
+    def _purge_expired_unlocked(self) -> None:
+        expired_keys = [key for key, entry in self._entries.items() if self._is_expired(entry)]
+        for key in expired_keys:
+            self._discard_key_unlocked(key)
+        self._evictions += len(expired_keys)

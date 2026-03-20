@@ -608,6 +608,28 @@ class RetrievalAndChatServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.hybrid.calls), 1)
         self.assertEqual(len(llm.summarize_calls), 1)
 
+    async def test_search_hits_request_cache_until_scope_invalidation(self):
+        request = SearchRequest(
+            query="fastapi",
+            collection="docs",
+            limit=3,
+            tenant=TenantSpec(base_collection="docs", user_id=7),
+        )
+
+        first = await self.retrieval.search(request)
+        second = await self.retrieval.search(request)
+
+        self.assertEqual(first.summary, second.summary)
+        self.assertEqual(len(self.hybrid.calls), 1)
+        cache_snapshot = self.runtime.get_retrieval_cache().snapshot()
+        self.assertEqual(cache_snapshot["hits"], 1)
+
+        self.runtime.invalidate_retrieval_scope("docs", request.tenant.to_core())
+        third = await self.retrieval.search(request)
+
+        self.assertEqual(third.summary, "summary for fastapi")
+        self.assertEqual(len(self.hybrid.calls), 2)
+
     async def test_indexing_writes_invalidate_cached_search_scope(self):
         request = SearchRequest(
             query="fastapi",

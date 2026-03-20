@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from copy import deepcopy
 from typing import List
 
 from ..context import normalize_request_context
@@ -29,8 +28,7 @@ class RetrievalService:
         )
         request.context = request_context
         request.tenant = request_context.tenant
-        cache_lookup = self._prepare_cache_lookup(request)
-        return await self._search(request, cache_lookup=cache_lookup)
+        return await self._search(request)
 
     async def _search(
         self,
@@ -38,15 +36,21 @@ class RetrievalService:
         *,
         cache_lookup: tuple[RetrievalCache | None, RetrievalCacheKey | None, CacheGeneration | None] | None = None,
     ) -> SearchResponse:
-        tenant = request.tenant.to_core()
-        cache, cache_key, cache_generation = cache_lookup or self._prepare_cache_lookup(request)
+        request_context = normalize_request_context(
+            request.context,
+            tenant=request.tenant,
+            base_collection=request.collection,
+        )
+        request.context = request_context
+        request.tenant = request_context.tenant
+        tenant = request_context.tenant.to_core()
+        cache, cache_key, cache_generation = cache_lookup or self._prepare_cache_lookup(request, request_context=request_context)
         if cache is not None and cache_key is not None:
             cached = cache.get(cache_key)
             if cached is not None:
                 return cached
 
         hybrid = await self.runtime.ensure_hybrid_service()
-        started = self.runtime.observability._clock() if self.runtime.observability else None
         hits = await hybrid.retrieve(
             request.query,
             collection_name=request.collection,
@@ -54,12 +58,6 @@ class RetrievalService:
             limit=request.limit,
             threshold=request.threshold,
         )
-        if started is not None:
-            self.runtime.observability.record_provider_latency(
-                "retrieval",
-                "search",
-                (self.runtime.observability._clock() - started) * 1000.0,
-            )
 
         results = [
             SearchResultView(
@@ -77,14 +75,7 @@ class RetrievalService:
         if hits and self.runtime.settings.enable_llm_summary:
             try:
                 llm_model = await self.runtime.ensure_llm_model()
-                started = self.runtime.observability._clock() if self.runtime.observability else None
                 summary = await llm_model.summarize(self._build_summary_context(hits), request.query)
-                if started is not None:
-                    self.runtime.observability.record_provider_latency(
-                        "llm",
-                        "summarize",
-                        (self.runtime.observability._clock() - started) * 1000.0,
-                    )
             except Exception as exc:
                 logger.warning("LLM summary failed, falling back to raw results: %s", exc)
 
@@ -95,7 +86,7 @@ class RetrievalService:
             summary=summary,
         )
         if cache is not None and cache_key is not None:
-            cache.set(key=cache_key, response=response, expected_generation=cache_generation)
+            cache.set(response=response, key=cache_key, expected_generation=cache_generation)
         return response
 
     async def ask(self, request: SearchRequest) -> SearchResponse:
@@ -106,45 +97,45 @@ class RetrievalService:
             tenant=request.tenant,
             base_collection=request.collection,
         )
-        request.tenant = request.context.tenant
-        cache_lookup = self._prepare_cache_lookup(request)
+        cache_lookup = self._prepare_cache_lookup(request, request_context=request.context)
         response = await self._search(request, cache_lookup=cache_lookup)
         if request.mode == "summary" and response.summary is None:
             try:
                 llm_model = await self.runtime.ensure_llm_model()
-                started = self.runtime.observability._clock() if self.runtime.observability else None
                 response.summary = await llm_model.summarize(
                     self._build_summary_context_from_views(response.results),
                     request.query,
                 )
-                if started is not None:
-                    self.runtime.observability.record_provider_latency(
-                        "llm",
-                        "summarize_fallback",
-                        (self.runtime.observability._clock() - started) * 1000.0,
-                    )
             except Exception as exc:
                 logger.warning("Summary mode fallback failed: %s", exc)
                 response.summary = "摘要生成功能暂未启用。"
             cache, cache_key, cache_generation = cache_lookup
             if cache is not None and cache_key is not None:
-                cache.set(key=cache_key, response=response, expected_generation=cache_generation)
+                cache.set(response=response, key=cache_key, expected_generation=cache_generation)
         return response
 
     def _prepare_cache_lookup(
         self,
         request: SearchRequest,
+        *,
+        request_context,
     ) -> tuple[RetrievalCache | None, RetrievalCacheKey | None, CacheGeneration | None]:
         cache = self.runtime.get_retrieval_cache()
         if cache is None:
             return None, None, None
 
-        actual_collection = resolve_collection_name(request.collection, tenant=request.tenant.to_core())
-        key = self._build_cache_key(request, actual_collection)
+        actual_collection = resolve_collection_name(request.collection, tenant=request_context.tenant.to_core())
+        key = self._build_cache_key(request, request_context=request_context, actual_collection=actual_collection)
         return cache, key, cache.generation_for(key)
 
-    def _build_cache_key(self, request: SearchRequest, actual_collection: str) -> RetrievalCacheKey:
-        tenant = request.tenant
+    def _build_cache_key(
+        self,
+        request: SearchRequest,
+        *,
+        request_context,
+        actual_collection: str,
+    ) -> RetrievalCacheKey:
+        tenant = request_context.tenant
         return RetrievalCacheKey(
             base_collection=tenant.base_collection or request.collection,
             user_id=tenant.user_id,

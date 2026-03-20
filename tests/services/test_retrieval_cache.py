@@ -80,6 +80,23 @@ class RetrievalCacheTests(unittest.TestCase):
         self.assertFalse(cache.set(key, _build_response("stale"), expected_generation=generation))
         self.assertIsNone(cache.get(key))
 
+    def test_reconfigure_updates_limits(self) -> None:
+        cache = RetrievalCache(max_entries=10, ttl_seconds=30)
+
+        cache.reconfigure(max_entries=2, ttl_seconds=5)
+
+        snapshot = cache.snapshot()
+        self.assertEqual(snapshot["max_entries"], 2)
+        self.assertEqual(snapshot["ttl_seconds"], 5)
+
+    def test_expired_entries_are_evicted_on_read(self) -> None:
+        ticks = iter([0.0, 5.0])
+        cache = RetrievalCache(ttl_seconds=3, clock=lambda: next(ticks))
+        key = _build_key()
+
+        self.assertTrue(cache.set(key, _build_response()))
+        self.assertIsNone(cache.get(key))
+        self.assertEqual(cache.snapshot()["entries"], 0)
 
 if __name__ == "__main__":
     unittest.main()

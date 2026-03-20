@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable
 
 from fastapi import FastAPI, HTTPException, Request
 
@@ -189,10 +190,18 @@ async def ensure_app_context_current(target: Request | Any, *, force: bool = Fal
     return context
 
 
-def create_http_app(*, context: AppContext | None = None) -> FastAPI:
+def create_http_app(
+    *,
+    context: AppContext | None = None,
+    lifespan: Callable[[FastAPI], AsyncIterator[None]] | None = None,
+) -> FastAPI:
     """Create the default HTTP shell app."""
 
-    app = FastAPI(title="MCP-RAG HTTP API", description="API for configuring MCP-RAG and adding documents")
+    app = FastAPI(
+        title="MCP-RAG HTTP API",
+        description="API for configuring MCP-RAG and adding documents",
+        lifespan=lifespan,
+    )
     app.state.shell_context = context or get_default_app_context()
     return app
 
@@ -239,12 +248,23 @@ def runtime_snapshot(context: AppContext) -> dict[str, Any]:
     if callable(snapshot_fn):
         return snapshot_fn()
     return {
-        "document_processor": getattr(runtime, "_document_processor", None) is not None,
-        "embedding_model": getattr(runtime, "_embedding_model", None) is not None,
-        "vector_store": getattr(runtime, "_vector_store", None) is not None,
-        "hybrid_service": getattr(runtime, "_hybrid_service", None) is not None,
-        "llm_model": getattr(runtime, "_llm_model", None) is not None,
+        "document_processor": {"ready": getattr(runtime, "_document_processor", None) is not None, "status": "unknown"},
+        "embedding_model": {"ready": getattr(runtime, "_embedding_model", None) is not None, "status": "unknown"},
+        "vector_store": {"ready": getattr(runtime, "_vector_store", None) is not None, "status": "unknown"},
+        "hybrid_service": {"ready": getattr(runtime, "_hybrid_service", None) is not None, "status": "unknown"},
+        "llm_model": {"ready": getattr(runtime, "_llm_model", None) is not None, "status": "unknown"},
     }
+
+
+def runtime_ready(snapshot: dict[str, Any]) -> bool:
+    """Collapse structured runtime readiness into a single transport-level flag."""
+
+    for name, value in snapshot.items():
+        if name == "provider_budget":
+            continue
+        if isinstance(value, dict) and "ready" in value and not bool(value["ready"]):
+            return False
+    return True
 
 
 def health_payload(context: AppContext) -> dict[str, Any]:
@@ -252,8 +272,10 @@ def health_payload(context: AppContext) -> dict[str, Any]:
 
     collector_payload = context.observability.as_dict()
     health = dict(collector_payload["health"])
-    health["ready"] = context.bootstrapped
-    health["runtime"] = runtime_snapshot(context)
+    snapshot = runtime_snapshot(context)
+    health["bootstrapped"] = context.bootstrapped
+    health["ready"] = bool(context.bootstrapped and runtime_ready(snapshot))
+    health["runtime"] = snapshot
     health["config_revision"] = context.config_revision
     return health
 
@@ -261,9 +283,11 @@ def health_payload(context: AppContext) -> dict[str, Any]:
 def ready_payload(context: AppContext) -> dict[str, Any]:
     """Build a readiness response."""
 
+    snapshot = runtime_snapshot(context)
     return {
-        "ready": context.bootstrapped,
-        "runtime": runtime_snapshot(context),
+        "bootstrapped": context.bootstrapped,
+        "ready": bool(context.bootstrapped and runtime_ready(snapshot)),
+        "runtime": snapshot,
         "config_revision": context.config_revision,
     }
 

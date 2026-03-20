@@ -29,6 +29,20 @@ class ConfigManagerTests(unittest.TestCase):
 
             self.assertTrue(manager.update_setting("security", {"enabled": True, "allow_anonymous": False, "api_keys": ["alpha"]}))
             self.assertTrue(manager.update_settings({"rate_limit": {"requests_per_window": 15, "window_seconds": 30, "burst": 5}}))
+            self.assertTrue(
+                manager.update_settings(
+                    {
+                        "observability": {
+                            "warning_error_rate": 0.1,
+                            "critical_error_rate": 0.4,
+                            "slow_request_ms": 250.0,
+                            "latency_window_size": 128,
+                        },
+                        "embedding_fallback_provider": "m3e-small",
+                        "llm_fallback_provider": "ollama",
+                    }
+                )
+            )
 
             reloaded = ConfigManager(config_file=str(config_path))
             settings = reloaded.settings
@@ -38,10 +52,14 @@ class ConfigManagerTests(unittest.TestCase):
             self.assertEqual(settings.rate_limit.requests_per_window, 15)
             self.assertEqual(settings.rate_limit.window_seconds, 30)
             self.assertEqual(settings.rate_limit.burst, 5)
+            self.assertEqual(settings.observability.latency_window_size, 128)
+            self.assertEqual(settings.embedding_fallback_provider, "m3e-small")
+            self.assertEqual(settings.llm_fallback_provider, "ollama")
 
             payload = json.loads(config_path.read_text(encoding="utf-8"))
             self.assertEqual(payload["security"]["api_keys"], ["alpha"])
             self.assertEqual(payload["rate_limit"]["burst"], 5)
+            self.assertEqual(payload["observability"]["latency_window_size"], 128)
 
     def test_reload_picks_up_external_config_changes(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

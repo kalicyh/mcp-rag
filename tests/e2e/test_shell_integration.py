@@ -5,6 +5,7 @@ import unittest
 
 from fastapi.testclient import TestClient
 
+import mcp_rag.http_server as http_server_module
 from mcp_rag.config import Settings
 from mcp_rag.core.indexing import ChromaVectorStore, DocumentProcessor
 from mcp_rag.http_server import app
@@ -53,6 +54,7 @@ class ShellIntegrationE2ETests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.original_context = app.state.shell_context
+        self.original_mcp_context = http_server_module.mcp_server.shell_context
 
         settings = Settings().model_copy(
             update={
@@ -84,11 +86,13 @@ class ShellIntegrationE2ETests(unittest.IsolatedAsyncioTestCase):
         )
         self.context.bootstrapped = True
         app.state.shell_context = self.context
+        http_server_module.mcp_server.shell_context = self.context
         self.client = TestClient(app)
 
     def tearDown(self) -> None:
         self.client.close()
         app.state.shell_context = self.original_context
+        http_server_module.mcp_server.shell_context = self.original_mcp_context
         self.temp_dir.cleanup()
 
     async def test_http_and_mcp_share_real_chroma_backing_store(self) -> None:
@@ -177,5 +181,75 @@ class ShellIntegrationE2ETests(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(metrics_payload["operations"]["search"]["count"], 3)
         self.assertGreaterEqual(metrics_payload["operations"]["chat"]["count"], 1)
         self.assertIn("providers", metrics_payload)
-        self.assertIn("llm.generate", metrics_payload["providers"])
+        self.assertIn("doubao.generate", metrics_payload["providers"])
         self.assertGreaterEqual(self.context.observability.snapshot().operations["mcp.rag_ask"].count, 1)
+
+    async def test_streamable_http_mcp_smoke(self) -> None:
+        with TestClient(app) as client:
+            upload = client.post(
+                "/upload-files",
+                headers={"x-api-key": "secret"},
+                data={"collection": "docs"},
+                files=[
+                    (
+                        "files",
+                        (
+                            "fastapi.txt",
+                            b"FastAPI is a Python web framework built on Starlette and Pydantic.",
+                            "text/plain",
+                        ),
+                    )
+                ],
+            )
+            self.assertEqual(upload.status_code, 200)
+            self.assertEqual(upload.json()["successful"], 1)
+
+            init_response = client.post(
+                "/mcp",
+                headers={"accept": "application/json"},
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {
+                        "protocolVersion": "2024-11-05",
+                        "capabilities": {},
+                        "clientInfo": {"name": "e2e-client", "version": "1.0"},
+                    },
+                },
+            )
+            self.assertEqual(init_response.status_code, 200)
+
+            tools_response = client.post(
+                "/mcp",
+                headers={"accept": "application/json"},
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "tools/list",
+                    "params": {},
+                },
+            )
+            self.assertEqual(tools_response.status_code, 200)
+            self.assertTrue(any(tool["name"] == "rag_ask" for tool in tools_response.json()["result"]["tools"]))
+
+            call_response = client.post(
+                "/mcp",
+                headers={"accept": "application/json"},
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 3,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "rag_ask",
+                        "arguments": {
+                            "query": "FastAPI",
+                            "collection": "docs",
+                            "mode": "summary",
+                            "api_key": "secret",
+                        },
+                    },
+                },
+            )
+            self.assertEqual(call_response.status_code, 200)
+            self.assertIn("summary for FastAPI", call_response.json()["result"]["content"][0]["text"])

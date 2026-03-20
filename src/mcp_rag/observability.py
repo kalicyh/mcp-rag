@@ -41,8 +41,6 @@ class _OperationState:
         self.last_latency_ms = duration_ms
         self.last_seen_at = seen_at
         self.samples.append(duration_ms)
-        if len(self.samples) > 512:
-            self.samples.pop(0)
 
     def snapshot(self) -> OperationStats:
         average = self.total_latency_ms / self.count if self.count else 0.0
@@ -192,6 +190,7 @@ class ObservabilityCollector:
         warning_error_rate: float = 0.05,
         critical_error_rate: float = 0.2,
         slow_request_ms: float = 1000.0,
+        latency_window_size: int = 512,
     ) -> None:
         if not 0 <= warning_error_rate <= 1:
             raise ValueError("warning_error_rate must be between 0 and 1")
@@ -199,11 +198,14 @@ class ObservabilityCollector:
             raise ValueError("critical_error_rate must be between 0 and 1")
         if slow_request_ms < 0:
             raise ValueError("slow_request_ms must be non-negative")
+        if latency_window_size <= 0:
+            raise ValueError("latency_window_size must be positive")
         self._clock = clock
         self._started_at = clock()
         self._warning_error_rate = warning_error_rate
         self._critical_error_rate = critical_error_rate
         self._slow_request_ms = slow_request_ms
+        self._latency_window_size = int(latency_window_size)
         self._lock = RLock()
         self._total_requests = 0
         self._error_count = 0
@@ -218,6 +220,7 @@ class ObservabilityCollector:
             warning_error_rate=float(_read_attr(obs, "warning_error_rate", 0.05)),
             critical_error_rate=float(_read_attr(obs, "critical_error_rate", 0.2)),
             slow_request_ms=float(_read_attr(obs, "slow_request_ms", 1000.0)),
+            latency_window_size=int(_read_attr(obs, "latency_window_size", 512) or 512),
         )
 
     def timer(self, operation: str) -> _ObservationTimer:
@@ -230,6 +233,7 @@ class ObservabilityCollector:
         warning_error_rate = float(_read_attr(obs, "warning_error_rate", 0.05))
         critical_error_rate = float(_read_attr(obs, "critical_error_rate", 0.2))
         slow_request_ms = float(_read_attr(obs, "slow_request_ms", 1000.0))
+        latency_window_size = int(_read_attr(obs, "latency_window_size", 512) or 512)
 
         if not 0 <= warning_error_rate <= 1:
             raise ValueError("warning_error_rate must be between 0 and 1")
@@ -237,11 +241,16 @@ class ObservabilityCollector:
             raise ValueError("critical_error_rate must be between 0 and 1")
         if slow_request_ms < 0:
             raise ValueError("slow_request_ms must be non-negative")
+        if latency_window_size <= 0:
+            raise ValueError("latency_window_size must be positive")
 
         with self._lock:
             self._warning_error_rate = warning_error_rate
             self._critical_error_rate = critical_error_rate
             self._slow_request_ms = slow_request_ms
+            self._latency_window_size = latency_window_size
+            self._trim_samples_unlocked(self._operations)
+            self._trim_samples_unlocked(self._providers)
 
     def record_request(
         self,
@@ -255,6 +264,7 @@ class ObservabilityCollector:
         with self._lock:
             state = self._operations.setdefault(operation, _OperationState())
             state.observe(duration_ms, success=success, error=error, seen_at=seen_at)
+            self._trim_state_unlocked(state)
             self._total_requests += 1
             self._total_latency_ms += duration_ms
             if not success:
@@ -274,6 +284,7 @@ class ObservabilityCollector:
         with self._lock:
             state = self._providers.setdefault(key, _OperationState())
             state.observe(duration_ms, success=success, error=error, seen_at=seen_at)
+            self._trim_state_unlocked(state)
 
     def observe_latency(self, operation: str, duration_ms: float) -> None:
         self.record_request(operation, duration_ms)
@@ -339,6 +350,15 @@ class ObservabilityCollector:
             "metrics": snapshot.to_dict(),
             "health": health.to_dict(),
         }
+
+    def _trim_samples_unlocked(self, states: dict[str, _OperationState]) -> None:
+        for state in states.values():
+            self._trim_state_unlocked(state)
+
+    def _trim_state_unlocked(self, state: _OperationState) -> None:
+        overflow = len(state.samples) - self._latency_window_size
+        if overflow > 0:
+            del state.samples[:overflow]
 
 
 def _percentiles(samples: list[float]) -> tuple[float, float, float]:

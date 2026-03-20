@@ -31,7 +31,7 @@ class ChatService:
                 collection=request.collection,
                 limit=request.limit,
                 threshold=0.7,
-                tenant=request.tenant,
+                tenant=request_context.tenant,
                 context=request_context,
             )
         )
@@ -49,14 +49,7 @@ class ChatService:
 
         try:
             llm_model = await self.runtime.ensure_llm_model()
-            started = self.runtime.observability._clock() if self.runtime.observability else None
             answer = await llm_model.generate(prompt)
-            if started is not None:
-                self.runtime.observability.record_provider_latency(
-                    "llm",
-                    "generate",
-                    (self.runtime.observability._clock() - started) * 1000.0,
-                )
         except Exception as exc:
             logger.warning("LLM generation failed, using retrieval context fallback: %s", exc)
             answer = (

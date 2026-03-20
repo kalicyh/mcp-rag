@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 from fastapi.testclient import TestClient
 
 import mcp_rag.http_server as http_server_module
-from mcp_rag.config import ConfigManager
+from mcp_rag.config import ConfigManager, Settings
 from mcp_rag.contracts import ChatResponse, SearchResponse, SearchResultView
 from mcp_rag.http_server import ConfigUpdate, app
 from mcp_rag.observability import ObservabilityCollector
@@ -55,6 +55,22 @@ class HttpServerFacadeTests(unittest.TestCase):
             )
         )
         service.search = AsyncMock(
+            return_value=SearchResponse(
+                query="fastapi",
+                collection="docs",
+                results=[
+                    SearchResultView(
+                        content="FastAPI routing and dependencies",
+                        score=0.91,
+                        metadata={"source": "guide.md"},
+                        source="guide.md",
+                        filename="guide.md",
+                    )
+                ],
+                summary="summary text",
+            )
+        )
+        service.ask = AsyncMock(
             return_value=SearchResponse(
                 query="fastapi",
                 collection="docs",
@@ -163,7 +179,10 @@ class HttpServerFacadeTests(unittest.TestCase):
 
     def test_health_metrics_and_guardrails_use_shell_context(self):
         service = self._fake_service()
+        ready_settings = Settings().model_copy(update={"embedding_provider": "m3e-small"})
         context = create_shell_context(
+            settings_obj=ready_settings,
+            runtime=ServiceRuntime(settings_obj=ready_settings),
             service_provider=AsyncMock(return_value=service),
             security_policy=SecurityPolicy(enabled=True, allow_anonymous=False, api_keys=["secret"]),
             rate_limiter=TokenBucketRateLimiter(limit=1, window_seconds=60),
@@ -177,6 +196,7 @@ class HttpServerFacadeTests(unittest.TestCase):
         self.assertTrue(ready.json()["ready"])
         self.assertIn("runtime", ready.json())
         self.assertIn("embedding_model", ready.json()["runtime"])
+        self.assertEqual(ready.json()["runtime"]["embedding_model"]["status"], "configured")
 
         health = self.client.get("/health")
         self.assertEqual(health.status_code, 200)
@@ -209,6 +229,21 @@ class HttpServerFacadeTests(unittest.TestCase):
         self.assertEqual(service.search.await_count, 1)
         self.assertIn("providers", payload)
         self.assertIn("config_revision", metrics_json)
+
+    def test_ready_returns_503_when_runtime_is_misconfigured(self):
+        context = create_shell_context(
+            settings_obj=Settings(),
+            runtime=ServiceRuntime(settings_obj=Settings()),
+            service_provider=AsyncMock(return_value=self._fake_service()),
+        )
+        context.bootstrapped = True
+        self._set_context(context)
+
+        ready = self.client.get("/ready")
+
+        self.assertEqual(ready.status_code, 503)
+        self.assertFalse(ready.json()["ready"])
+        self.assertEqual(ready.json()["runtime"]["embedding_model"]["status"], "misconfigured")
 
     def test_http_routes_expose_request_and_trace_headers(self):
         service = self._fake_service()
@@ -312,6 +347,70 @@ class HttpServerFacadeTests(unittest.TestCase):
                 self.assertTrue(runtime.settings.enable_reranker)
             finally:
                 http_server_module.config_manager = original_manager
+
+    def test_streamable_http_mcp_smoke(self):
+        service = self._fake_service()
+        ready_settings = Settings().model_copy(update={"embedding_provider": "m3e-small"})
+        context = create_shell_context(
+            settings_obj=ready_settings,
+            runtime=ServiceRuntime(settings_obj=ready_settings),
+            service_provider=AsyncMock(return_value=service),
+            security_policy=SecurityPolicy(enabled=True, allow_anonymous=False, api_keys=["secret"]),
+            observability=ObservabilityCollector(),
+        )
+        context.bootstrapped = True
+        self._set_context(context)
+
+        with TestClient(app) as client:
+            init_response = client.post(
+                "/mcp",
+                headers={"accept": "application/json"},
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {
+                        "protocolVersion": "2024-11-05",
+                        "capabilities": {},
+                        "clientInfo": {"name": "test-client", "version": "1.0"},
+                    },
+                },
+            )
+            self.assertEqual(init_response.status_code, 200)
+
+            tools_response = client.post(
+                "/mcp",
+                headers={"accept": "application/json"},
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "tools/list",
+                    "params": {},
+                },
+            )
+            self.assertEqual(tools_response.status_code, 200)
+            tools_payload = tools_response.json()["result"]["tools"]
+            self.assertTrue(any(tool["name"] == "rag_ask" for tool in tools_payload))
+
+            call_response = client.post(
+                "/mcp",
+                headers={"accept": "application/json"},
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 3,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "rag_ask",
+                        "arguments": {
+                            "query": "fastapi",
+                            "collection": "docs",
+                            "api_key": "secret",
+                        },
+                    },
+                },
+            )
+            self.assertEqual(call_response.status_code, 200)
+            self.assertIn("为查询 'fastapi' 找到 1 个相关文档", call_response.json()["result"]["content"][0]["text"])
 
 
 if __name__ == "__main__":

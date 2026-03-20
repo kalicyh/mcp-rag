@@ -59,7 +59,7 @@ class IndexingService:
             collection_name=request.collection,
         )
         await self.runtime.refresh_keywords(request.collection, tenant)
-        await self.runtime.invalidate_retrieval_cache(collection=request.collection, tenant=tenant)
+        self.runtime.invalidate_retrieval_scope(request.collection, tenant)
 
         return {
             "message": "Document added successfully",
@@ -190,11 +190,8 @@ class IndexingService:
                 if temp_path is not None and temp_path.exists():
                     temp_path.unlink(missing_ok=True)
 
-        if cache_dirty:
-            await self.runtime.invalidate_retrieval_cache(
-                collection=tenant_spec.base_collection,
-                tenant=tenant_spec.to_core(),
-            )
+        if indexed_documents > 0:
+            self.runtime.invalidate_retrieval_scope(tenant_spec.base_collection, tenant_spec.to_core())
 
         return BatchUploadResponse(
             total_files=len(files),
@@ -292,7 +289,7 @@ class IndexingService:
         )
         if deleted:
             await self.runtime.refresh_keywords(collection, tenant_spec.to_core())
-            await self.runtime.invalidate_retrieval_cache(collection=collection, tenant=tenant_spec.to_core())
+            self.runtime.invalidate_retrieval_scope(collection, tenant_spec.to_core())
         return deleted
 
     async def delete_file(
@@ -316,7 +313,7 @@ class IndexingService:
         )
         await self.runtime.refresh_keywords(collection, tenant_spec.to_core())
         if result:
-            await self.runtime.invalidate_retrieval_cache(collection=collection, tenant=tenant_spec.to_core())
+            self.runtime.invalidate_retrieval_scope(collection, tenant_spec.to_core())
         return result
 
     async def _delete_document_identifier(

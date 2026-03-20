@@ -104,6 +104,7 @@ class Settings(BaseModel):
 
     # Embedding model settings
     embedding_provider: str = Field(default="zhipu", description="嵌入提供商 (doubao, zhipu, m3e-small, e5-small)")
+    embedding_fallback_provider: Optional[str] = Field(default=None, description="嵌入回退提供商")
     embedding_device: str = Field(default="cpu", description="嵌入设备")  # cpu or cuda (仅本地模型使用)
     embedding_cache_dir: Optional[str] = Field(default=None, description="嵌入缓存目录 (仅本地模型使用)")
 
@@ -125,6 +126,7 @@ class Settings(BaseModel):
 
     # LLM settings for summary mode
     llm_provider: str = Field(default="doubao", description="LLM 提供商")  # ollama, doubao, chatglm
+    llm_fallback_provider: Optional[str] = Field(default=None, description="LLM 回退提供商")
     llm_model: str = Field(default="doubao-seed-1.6-250615", description="LLM 模型")
     llm_base_url: str = Field(default="https://ark.cn-beijing.volces.com/api/v3", description="LLM API 基础地址")
     llm_api_key: Optional[str] = Field(default=None, description="LLM API 密钥")
