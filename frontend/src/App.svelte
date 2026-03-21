@@ -1,6 +1,9 @@
 <script>
   import { onMount } from 'svelte';
-  import { api, API_BASE } from './lib/api.js';
+  import { api } from './lib/api.js';
+  import PageShell from './lib/components/PageShell.svelte';
+  import PageTabs from './lib/components/PageTabs.svelte';
+  import PanelCard from './lib/components/PanelCard.svelte';
 
   const STORAGE_KEY = 'mcp-rag-dashboard-state';
   const sections = [
@@ -961,18 +964,14 @@
 
   <main class="content">
     {#if activeSection === 'overview'}
-      <section class="section">
-        <div class="section-head">
-          <div>
-            <h2>运行概览</h2>
-            <p>状态、请求、集合、版本。</p>
-          </div>
+      <PageShell title="总览" subtitle="状态、请求、集合、版本。">
+        <svelte:fragment slot="meta">
           <div class="toolbar-group">
             <span class="pill info"><strong>{collectionSummary()}</strong><span>集合</span></span>
             <span class="pill good"><strong>{healthStatus() ? '正常' : '降级'}</strong><span>健康</span></span>
             <span class="pill {readyStatus() ? 'good' : 'bad'}"><strong>{readyStatus() ? '就绪' : '未就绪'}</strong><span>状态</span></span>
           </div>
-        </div>
+        </svelte:fragment>
 
         <div class="grid-4">
           <div class="card">
@@ -1004,37 +1003,30 @@
             </div>
           </div>
         </div>
-      </section>
+      </PageShell>
     {/if}
 
     {#if activeSection === 'documents'}
-      <section class="section">
-        <div class="section-toolbar">
-          <div class="panel-tabs">
-            {#each documentModes as mode}
-              <button class="panel-tab {documentMode === mode.id ? 'active' : ''}" on:click={() => switchDocumentMode(mode.id)}>
-                {mode.title}
-              </button>
-            {/each}
-          </div>
-        </div>
+      <PageShell title="文档管理" subtitle="导入、检索、删除。">
+        <svelte:fragment slot="toolbar">
+          <PageTabs
+            items={documentModes}
+            value={documentMode}
+            ariaLabel="文档模式"
+            on:change={(event) => switchDocumentMode(event.detail.value)}
+          />
+        </svelte:fragment>
 
         {#if documentMode === 'ingest'}
           <div class="grid-2">
-            <div class="card">
-              <div class="card-header">
-                <div>
-                <h3 class="card-title">文件上传</h3>
-                  <p class="card-subtitle">上传后自动切片入库。</p>
-                </div>
-                <div class="card-actions">
-                  <button class="button secondary" on:click={openFilePicker}>选择文件</button>
-                  <button class="button primary" on:click={uploadQueuedFiles} disabled={uploadBusy || queuedFiles.length === 0}>
-                    {uploadBusy ? '上传中...' : '开始上传'}
-                  </button>
-                </div>
-              </div>
-              <div class="card-body">
+            <PanelCard title="文件上传" subtitle="上传后自动切片入库。">
+              <svelte:fragment slot="actions">
+                <button class="button secondary" on:click={openFilePicker}>选择文件</button>
+                <button class="button primary" on:click={uploadQueuedFiles} disabled={uploadBusy || queuedFiles.length === 0}>
+                  {uploadBusy ? '上传中...' : '开始上传'}
+                </button>
+              </svelte:fragment>
+
                 <div
                   class="dropzone"
                   role="button"
@@ -1046,10 +1038,10 @@
                 >
                   <h3>拖拽文件到这里</h3>
                   <p>支持 `txt`、`md`、`pdf`、`docx`。静态站点会把请求发给当前同域后端。</p>
-                  <input id="file-input" type="file" multiple accept=".txt,.md,.pdf,.docx" style="display:none" on:change={(event) => addFiles(event.currentTarget.files)} />
+                  <input id="file-input" class="hidden-input" type="file" multiple accept=".txt,.md,.pdf,.docx" on:change={(event) => addFiles(event.currentTarget.files)} />
                 </div>
 
-                <div class="field" style="margin-top: 16px;">
+                <div class="field mt-16">
                   <div class="field-label">目标集合</div>
                   <select bind:value={documentCollection}>
                     {#each collections as collection}
@@ -1058,7 +1050,7 @@
                   </select>
                 </div>
 
-                <div class="file-list" style="margin-top: 16px;">
+                <div class="file-list mt-16">
                   {#each queuedFiles as file, index}
                     <div class="file-chip">
                       <div>
@@ -1071,26 +1063,18 @@
                     <div class="empty-state">还没有选中文件。</div>
                   {/each}
                 </div>
-              </div>
-            </div>
+            </PanelCard>
 
-            <div class="card">
-              <div class="card-header">
-                <div>
-                <h3 class="card-title">手工录入</h3>
-                  <p class="card-subtitle">快速补充短文本。</p>
-                </div>
-              </div>
-              <div class="card-body">
+            <PanelCard title="手工录入" subtitle="快速补充短文本。">
                 <div class="field">
                   <div class="field-label">标题</div>
                   <input bind:value={documentTitle} placeholder="例如：运维说明" />
                 </div>
-                <div class="field" style="margin-top: 14px;">
+                <div class="field mt-14">
                   <div class="field-label">内容</div>
                   <textarea bind:value={documentContent} placeholder="输入文档内容..."></textarea>
                 </div>
-                <div class="field-row" style="margin-top: 14px;">
+                <div class="field-row mt-14">
                   <div class="field">
                     <div class="field-label">集合</div>
                     <select bind:value={documentCollection}>
@@ -1106,26 +1090,18 @@
                     </button>
                   </div>
                 </div>
-              </div>
-            </div>
+            </PanelCard>
           </div>
         {/if}
 
         {#if documentMode === 'search'}
           <div class="grid-2">
-            <div class="card">
-              <div class="card-header">
-                <div>
-                <h3 class="card-title">检索</h3>
-                  <p class="card-subtitle">查片段并返回摘要。</p>
-                </div>
-              </div>
-              <div class="card-body">
+            <PanelCard title="检索" subtitle="查片段并返回摘要。">
                 <div class="field">
                   <div class="field-label">搜索关键词</div>
                   <input bind:value={searchQuery} placeholder="输入关键词..." on:keydown={(event) => event.key === 'Enter' && runSearch()} />
                 </div>
-                <div class="field-row" style="margin-top: 14px;">
+                <div class="field-row mt-14">
                   <div class="field">
                     <div class="field-label">集合</div>
                     <select bind:value={searchCollection}>
@@ -1139,23 +1115,15 @@
                     <input type="number" min="1" max="20" bind:value={searchLimit} />
                   </div>
                 </div>
-                <div style="margin-top: 14px;">
+                <div class="mt-14">
                   <button class="button primary" on:click={runSearch} disabled={searchBusy}>
                     {searchBusy ? '搜索中...' : '执行搜索'}
                   </button>
                 </div>
-              </div>
-            </div>
+            </PanelCard>
 
-            <div class="card">
-              <div class="card-header">
-                <div>
-                <h3 class="card-title">对话</h3>
-                  <p class="card-subtitle">基于检索结果问答。</p>
-                </div>
-              </div>
-              <div class="card-body">
-                <div class="field" style="margin-bottom: 14px;">
+            <PanelCard title="对话" subtitle="基于检索结果问答。">
+                <div class="field mb-14">
                   <div class="field-label">对话集合</div>
                   <select bind:value={chatCollection}>
                     {#each collections as collection}
@@ -1184,7 +1152,7 @@
                   </div>
                   <div class="chat-input-row">
                     <textarea bind:value={chatInput} placeholder="输入问题后点击发送..." on:keydown={(event) => event.key === 'Enter' && (event.metaKey || event.ctrlKey) && sendChat()}></textarea>
-                    <div class="card-actions" style="justify-content:flex-end;">
+                    <div class="card-actions justify-end">
                       <button class="button ghost" on:click={() => (chatMessages = chatMessages.slice(0, 1))}>清空</button>
                       <button class="button success" on:click={sendChat} disabled={chatBusy}>
                         {chatBusy ? '发送中...' : '发送'}
@@ -1192,19 +1160,12 @@
                     </div>
                   </div>
                 </div>
-              </div>
-            </div>
+            </PanelCard>
           </div>
 
           {#if searchResults.length || searchSummary}
-            <div class="card">
-              <div class="card-header">
-                <div>
-                  <h3 class="card-title">搜索结果</h3>
-                  <p class="card-subtitle">{searchResults.length} 条命中</p>
-                </div>
-              </div>
-              <div class="card-body result-list">
+            <PanelCard title="搜索结果" subtitle={`${searchResults.length} 条命中`}>
+              <div class="result-list">
                 {#if searchSummary}
                   <div class="result-card">
                     <span class="result-score">摘要</span>
@@ -1228,25 +1189,18 @@
                   <div class="empty-state">没有搜索结果。</div>
                 {/if}
               </div>
-            </div>
+            </PanelCard>
           {/if}
         {/if}
 
         {#if documentMode === 'manage'}
-          <div class="card">
-            <div class="card-header">
-              <div>
-                <h3 class="card-title">内容管理</h3>
-                <p class="card-subtitle">查看文件、片段并删除。</p>
-              </div>
-              <div class="card-actions">
+          <PanelCard title="内容管理" subtitle="查看文件、片段并删除。">
+            <svelte:fragment slot="actions">
                 <button class="button secondary" on:click={refreshDocuments} disabled={manageBusy}>{manageBusy ? '刷新中...' : '刷新列表'}</button>
                 {#if fileFilter}
                   <button class="button ghost" on:click={clearFileFilter}>清除筛选</button>
                 {/if}
-              </div>
-            </div>
-            <div class="card-body">
+            </svelte:fragment>
               <div class="field-row">
                 <div class="field">
                   <div class="field-label">集合</div>
@@ -1262,7 +1216,7 @@
                 </div>
               </div>
 
-              <div class="table" style="margin-top: 16px;">
+              <div class="table mt-16">
                 <div class="table-row header">
                   <span>名称</span>
                   <span>类型 / 片段</span>
@@ -1284,7 +1238,7 @@
                 {/if}
               </div>
 
-              <div class="divider" style="margin: 18px 0;"></div>
+              <div class="divider my-18"></div>
 
               <div class="table">
                 <div class="table-row header">
@@ -1309,38 +1263,30 @@
                 {/if}
               </div>
 
-              <div class="toolbar" style="margin-top: 16px;">
+              <div class="toolbar mt-16">
                 <div class="muted small">第 {managedPage + 1} 页 · 共 {documentsTotal} 条</div>
                 <div class="toolbar-group">
                   <button class="button secondary" on:click={prevPage} disabled={managedPage === 0}>上一页</button>
                   <button class="button secondary" on:click={nextPage} disabled={documents.length < managedPageSize}>下一页</button>
                 </div>
               </div>
-            </div>
-          </div>
+          </PanelCard>
         {/if}
-      </section>
+      </PageShell>
     {/if}
 
     {#if activeSection === 'config'}
-      <section class="section">
-        <div class="section-toolbar actions-only">
+      <PageShell title="配置中心" subtitle="热更新、重载和治理策略。">
+        <svelte:fragment slot="actions">
           <div class="card-actions">
             <button class="button secondary" on:click={reloadConfig} disabled={configBusy}>重新加载</button>
             <button class="button ghost" on:click={resetConfig} disabled={configBusy}>重置默认</button>
             <button class="button primary" on:click={saveConfig} disabled={configBusy}>{configBusy ? '保存中...' : '保存配置'}</button>
           </div>
-        </div>
+        </svelte:fragment>
 
         <div class="grid-2">
-          <div class="card">
-            <div class="card-header">
-              <div>
-                <h3 class="card-title">检索与模型</h3>
-                <p class="card-subtitle">常用检索和模型参数。</p>
-              </div>
-            </div>
-            <div class="card-body">
+          <PanelCard title="检索与模型" subtitle="常用检索和模型参数。">
               <div class="field-row">
                 <div class="field">
                   <div class="field-label">Embedding Provider</div>
@@ -1351,7 +1297,7 @@
                   <input bind:value={configDraft.embedding_fallback_provider} placeholder="可选" />
                 </div>
               </div>
-              <div class="field-row" style="margin-top: 14px;">
+              <div class="field-row mt-14">
                 <div class="field">
                   <div class="field-label">LLM Provider</div>
                   <input bind:value={configDraft.llm_provider} placeholder="doubao / ollama" />
@@ -1361,7 +1307,7 @@
                   <input bind:value={configDraft.llm_fallback_provider} placeholder="可选" />
                 </div>
               </div>
-              <div class="field-row" style="margin-top: 14px;">
+              <div class="field-row mt-14">
                 <div class="field">
                   <div class="field-label">LLM Model</div>
                   <input bind:value={configDraft.llm_model} />
@@ -1371,7 +1317,7 @@
                   <input type="number" min="1" bind:value={configDraft.max_retrieval_results} />
                 </div>
               </div>
-              <div class="field-row" style="margin-top: 14px;">
+              <div class="field-row mt-14">
                 <div class="field">
                   <div class="field-label">相似度阈值</div>
                   <input type="number" step="0.01" min="0" max="1" bind:value={configDraft.similarity_threshold} />
@@ -1385,17 +1331,9 @@
                   </div>
                 </div>
               </div>
-            </div>
-          </div>
+          </PanelCard>
 
-          <div class="card">
-            <div class="card-header">
-              <div>
-                <h3 class="card-title">缓存与安全</h3>
-                <p class="card-subtitle">缓存、鉴权、租户 key。</p>
-              </div>
-            </div>
-            <div class="card-body">
+          <PanelCard title="缓存与安全" subtitle="缓存、鉴权、租户 key。">
               <div class="field-row">
                 <div class="field">
                   <div class="field-label">Cache Enabled</div>
@@ -1409,7 +1347,7 @@
                   </div>
                 </div>
               </div>
-              <div class="field-row" style="margin-top: 14px;">
+              <div class="field-row mt-14">
                 <div class="field">
                   <div class="field-label">Security Enabled</div>
                   <label class="collection-chip"><input type="checkbox" bind:checked={configDraft.security.enabled} /> 启用鉴权</label>
@@ -1419,25 +1357,17 @@
                   <label class="collection-chip"><input type="checkbox" bind:checked={configDraft.security.allow_anonymous} /> 允许匿名</label>
                 </div>
               </div>
-              <div class="field" style="margin-top: 14px;">
+              <div class="field mt-14">
                 <div class="field-label">API Keys</div>
                 <textarea bind:value={configDraft.security.api_keys_text} placeholder="每行一个 API key"></textarea>
               </div>
-              <div class="field" style="margin-top: 14px;">
-                <div class="field-label">Tenant API Keys JSON</div>
-                <textarea bind:value={configDraft.security.tenant_api_keys_text} placeholder="u1_default: [key]"></textarea>
-              </div>
-            </div>
-          </div>
+                <div class="field mt-14">
+                  <div class="field-label">Tenant API Keys JSON</div>
+                  <textarea bind:value={configDraft.security.tenant_api_keys_text} placeholder="u1_default: [key]"></textarea>
+                </div>
+          </PanelCard>
 
-          <div class="card">
-            <div class="card-header">
-              <div>
-                <h3 class="card-title">限流与配额</h3>
-                <p class="card-subtitle">控制请求和索引上限。</p>
-              </div>
-            </div>
-            <div class="card-body">
+          <PanelCard title="限流与配额" subtitle="控制请求和索引上限。">
               <div class="field-row">
                 <div class="field">
                   <div class="field-label">Requests / Window</div>
@@ -1448,11 +1378,11 @@
                   <input type="number" min="1" bind:value={configDraft.rate_limit.window_seconds} />
                 </div>
               </div>
-              <div class="field" style="margin-top: 14px;">
+              <div class="field mt-14">
                 <div class="field-label">Burst</div>
                 <input type="number" min="0" bind:value={configDraft.rate_limit.burst} />
               </div>
-              <div class="divider" style="margin: 18px 0;"></div>
+              <div class="divider my-18"></div>
               <div class="field-row">
                 <div class="field">
                   <div class="field-label">Max Upload Files</div>
@@ -1463,7 +1393,7 @@
                   <input type="number" min="1" bind:value={configDraft.quotas.max_upload_bytes} />
                 </div>
               </div>
-              <div class="field-row" style="margin-top: 14px;">
+              <div class="field-row mt-14">
                 <div class="field">
                   <div class="field-label">Max File Bytes</div>
                   <input type="number" min="1" bind:value={configDraft.quotas.max_upload_file_bytes} />
@@ -1473,7 +1403,7 @@
                   <input type="number" min="1" bind:value={configDraft.quotas.max_index_documents} />
                 </div>
               </div>
-              <div class="field-row" style="margin-top: 14px;">
+              <div class="field-row mt-14">
                 <div class="field">
                   <div class="field-label">Max Index Chunks</div>
                   <input type="number" min="1" bind:value={configDraft.quotas.max_index_chunks} />
@@ -1483,17 +1413,9 @@
                   <input type="number" min="1" bind:value={configDraft.quotas.max_index_chars} />
                 </div>
               </div>
-            </div>
-          </div>
+          </PanelCard>
 
-          <div class="card">
-            <div class="card-header">
-              <div>
-                <h3 class="card-title">观测与 Provider Budget</h3>
-                <p class="card-subtitle">健康阈值和 provider 预算。</p>
-              </div>
-            </div>
-            <div class="card-body">
+          <PanelCard title="观测与 Provider Budget" subtitle="健康阈值和 provider 预算。">
               <div class="field-row">
                 <div class="field">
                   <div class="field-label">Warning Error Rate</div>
@@ -1504,7 +1426,7 @@
                   <input type="number" step="0.01" min="0" max="1" bind:value={configDraft.observability.critical_error_rate} />
                 </div>
               </div>
-              <div class="field-row" style="margin-top: 14px;">
+              <div class="field-row mt-14">
                 <div class="field">
                   <div class="field-label">Slow Request ms</div>
                   <input type="number" min="0" bind:value={configDraft.observability.slow_request_ms} />
@@ -1514,11 +1436,11 @@
                   <input type="number" min="1" bind:value={configDraft.observability.latency_window_size} />
                 </div>
               </div>
-              <div class="divider" style="margin: 18px 0;"></div>
+              <div class="divider my-18"></div>
               <div class="field-switch">
                 <label class="collection-chip"><input type="checkbox" bind:checked={configDraft.provider_budget.enabled} /> 启用 Provider Budget</label>
               </div>
-              <div class="field-row" style="margin-top: 14px;">
+              <div class="field-row mt-14">
                 <div class="field">
                   <div class="field-label">Embedding Window</div>
                   <input type="number" min="1" bind:value={configDraft.provider_budget.embeddings.requests_per_window} />
@@ -1528,7 +1450,7 @@
                   <input type="number" min="0" bind:value={configDraft.provider_budget.embeddings.burst} />
                 </div>
               </div>
-              <div class="field-row" style="margin-top: 14px;">
+              <div class="field-row mt-14">
                 <div class="field">
                   <div class="field-label">LLM Window</div>
                   <input type="number" min="1" bind:value={configDraft.provider_budget.llm.requests_per_window} />
@@ -1538,7 +1460,7 @@
                   <input type="number" min="0" bind:value={configDraft.provider_budget.llm.burst} />
                 </div>
               </div>
-              <div class="field-row" style="margin-top: 14px;">
+              <div class="field-row mt-14">
                 <div class="field">
                   <div class="field-label">Failure Threshold</div>
                   <input type="number" min="0" bind:value={configDraft.provider_budget.llm.failure_threshold} />
@@ -1548,34 +1470,25 @@
                   <input type="number" min="0" bind:value={configDraft.provider_budget.llm.cooldown_seconds} />
                 </div>
               </div>
-            </div>
-          </div>
+          </PanelCard>
         </div>
 
-        <div class="card">
-          <div class="card-header">
-            <div>
-              <h3 class="card-title">高级配置</h3>
-              <p class="card-subtitle">直接编辑 provider_configs JSON。</p>
-            </div>
-          </div>
-          <div class="card-body">
+        <PanelCard title="高级配置" subtitle="直接编辑 provider_configs JSON。">
             <div class="field">
               <div class="field-label">Provider Configs JSON</div>
               <textarea bind:value={configDraft.provider_configs_text} spellcheck="false"></textarea>
             </div>
-          </div>
-        </div>
-      </section>
+        </PanelCard>
+      </PageShell>
     {/if}
 
     {#if activeSection === 'status'}
-      <section class="section">
-        <div class="section-toolbar actions-only">
+      <PageShell title="服务状态" subtitle="健康、就绪和请求指标。">
+        <svelte:fragment slot="actions">
           <div class="card-actions">
             <button class="button secondary" on:click={refreshStatus} disabled={statusBusy}>{statusBusy ? '刷新中...' : '刷新状态'}</button>
           </div>
-        </div>
+        </svelte:fragment>
 
         <div class="grid-3">
           <div class="card">
@@ -1602,14 +1515,8 @@
         </div>
 
         <div class="grid-2">
-          <div class="card">
-            <div class="card-header">
-              <div>
-                <h3 class="card-title">运行时详情</h3>
-                <p class="card-subtitle">依赖状态。</p>
-              </div>
-            </div>
-            <div class="card-body status-stack">
+          <PanelCard title="运行时详情" subtitle="依赖状态。">
+            <div class="status-stack">
               {#each runtimeRows() as row}
                 <div class="status-row">
                   <div>
@@ -1624,16 +1531,10 @@
                 </div>
               {/each}
             </div>
-          </div>
+          </PanelCard>
 
-          <div class="card">
-            <div class="card-header">
-              <div>
-                <h3 class="card-title">Provider 健康</h3>
-                <p class="card-subtitle">延迟和错误。</p>
-              </div>
-            </div>
-            <div class="card-body status-stack">
+          <PanelCard title="Provider 健康" subtitle="延迟和错误。">
+            <div class="status-stack">
               {#each providerRows() as provider}
                 <div class="status-row">
                   <div>
@@ -1650,17 +1551,10 @@
                 <div class="empty-state">尚无 provider 观测数据。</div>
               {/each}
             </div>
-          </div>
+          </PanelCard>
         </div>
 
-        <div class="card">
-          <div class="card-header">
-            <div>
-              <h3 class="card-title">请求指标</h3>
-              <p class="card-subtitle">计数和分位数。</p>
-            </div>
-          </div>
-          <div class="card-body">
+        <PanelCard title="请求指标" subtitle="计数和分位数。">
             <div class="table">
               <div class="table-row header">
                 <span>操作</span>
@@ -1677,9 +1571,8 @@
                 <div class="empty-state">还没有操作数据。使用文档页或配置页后这里会开始积累。</div>
               {/each}
             </div>
-          </div>
-        </div>
-      </section>
+        </PanelCard>
+      </PageShell>
     {/if}
   </main>
 </div>
