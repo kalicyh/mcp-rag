@@ -1008,11 +1008,12 @@
 
     {#if activeSection === 'documents'}
       <PageShell title="文档管理" subtitle="导入、检索、删除。">
-        <svelte:fragment slot="toolbar">
+        <svelte:fragment slot="actions">
           <PageTabs
             items={documentModes}
             value={documentMode}
             ariaLabel="文档模式"
+            compact={true}
             on:change={(event) => switchDocumentMode(event.detail.value)}
           />
         </svelte:fragment>

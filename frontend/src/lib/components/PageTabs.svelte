@@ -4,6 +4,7 @@
   export let items = [];
   export let value = '';
   export let ariaLabel = '选项卡';
+  export let compact = false;
 
   const dispatch = createEventDispatcher();
 
@@ -12,7 +13,7 @@
   }
 </script>
 
-<div class="page-tabs" role="tablist" aria-label={ariaLabel}>
+<div class:compact class="page-tabs" role="tablist" aria-label={ariaLabel}>
   {#each items as item}
     <button
       type="button"
@@ -38,6 +39,11 @@
     box-shadow: 0 8px 18px rgba(15, 23, 42, 0.05);
   }
 
+  .page-tabs.compact {
+    gap: 6px;
+    padding: 4px;
+  }
+
   button {
     border: none;
     background: transparent;
@@ -45,6 +51,11 @@
     padding: 0.8rem 1rem;
     border-radius: 999px;
     transition: background 0.18s ease, color 0.18s ease, transform 0.18s ease;
+  }
+
+  .page-tabs.compact button {
+    padding: 0.62rem 0.9rem;
+    font-size: 0.92rem;
   }
 
   button.active {
