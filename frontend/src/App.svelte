@@ -204,7 +204,6 @@
   let toasts = [];
   let lastRefreshAt = null;
   let loading = true;
-  let savedCollection = 'default';
 
   function pushToast(title, message = '', tone = 'info') {
     const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -227,7 +226,6 @@
       if (parsed.searchCollection) searchCollection = parsed.searchCollection;
       if (parsed.chatCollection) chatCollection = parsed.chatCollection;
       if (parsed.manageCollection) manageCollection = parsed.manageCollection;
-      if (parsed.savedCollection) savedCollection = parsed.savedCollection;
     } catch {
       // Ignore malformed local state.
     }
@@ -247,7 +245,6 @@
       searchCollection,
       chatCollection,
       manageCollection,
-      savedCollection,
     };
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
   }
@@ -298,7 +295,6 @@
     searchCollection = value;
     chatCollection = value;
     manageCollection = value;
-    savedCollection = value;
     writeState();
   }
 
@@ -932,7 +928,6 @@
               <strong>{section.title}</strong>
               <span>{section.subtitle}</span>
             </span>
-            <span class="nav-badge">{section.id}</span>
           </button>
         {/each}
       </div>
@@ -962,51 +957,21 @@
       </div>
       <div class="field-help">这些值会附带到请求里，用来区分租户。</div>
     </div>
-
-    <div class="sidebar-footer">
-      <div class="pill {readyStatus() ? 'good' : 'bad'}">
-        <strong>{readyStatus() ? '就绪' : '未就绪'}</strong>
-        <span>就绪状态</span>
-      </div>
-      <div class="pill {healthStatus() ? 'good' : 'warn'}">
-        <strong>{healthStatus() ? '正常' : '降级'}</strong>
-        <span>健康状态</span>
-      </div>
-      <div class="muted small">API 地址: <span class="mono">{API_BASE || '同源'}</span></div>
-    </div>
   </aside>
 
   <main class="content">
     <section class="hero">
-      <div class="hero-grid">
-        <div class="hero-copy">
-          <div class="hero-kicker">控制台</div>
-          <h2 class="hero-title">统一管理 RAG 服务。</h2>
-          <p class="hero-subtitle">上传文档、修改配置、查看状态。</p>
-          <div class="hero-actions">
-            <button class="button primary" on:click={refreshActiveView} disabled={overviewBusy || statusBusy || configBusy || manageBusy}>
-              刷新当前视图
-            </button>
-            <button class="button secondary" on:click={refreshOverview} disabled={overviewBusy}>
-              刷新总览
-            </button>
-            <button class="button ghost" on:click={refreshCollections}>
-              刷新集合
-            </button>
-          </div>
-        </div>
-
-        <div class="card soft">
-          <div class="metric">
-            <div class="metric-label">当前页面</div>
-            <div class="metric-value">{activeSection}</div>
-            <div class="metric-meta">
-              {collectionSummary()} · {savedCollection}
-            </div>
-            <div class="divider"></div>
-            <div class="metric-meta">最后刷新: {lastRefreshAt ? lastRefreshAt.toLocaleString() : '未刷新'}</div>
-            <div class="metric-meta">构建方式: 静态前端 + 同域 API</div>
-          </div>
+      <div class="hero-copy">
+        <div class="hero-kicker">控制台</div>
+        <h2 class="hero-title">统一管理 RAG 服务。</h2>
+        <p class="hero-subtitle">上传文档、修改配置、查看状态。</p>
+        <div class="hero-actions">
+          <button class="button primary" on:click={refreshActiveView} disabled={overviewBusy || statusBusy || configBusy || manageBusy}>
+            刷新当前视图
+          </button>
+          <button class="button ghost" on:click={refreshCollections}>
+            刷新集合
+          </button>
         </div>
       </div>
     </section>
@@ -1055,91 +1020,6 @@
         </div>
       </div>
     </section>
-
-    {#if activeSection === 'overview'}
-      <section class="section">
-        <div class="section-head">
-          <div>
-            <h2>状态摘要</h2>
-            <p>ready、health、runtime、metrics。</p>
-          </div>
-        </div>
-        <div class="grid-3">
-          <div class="card">
-            <div class="card-header">
-              <div>
-                <h3 class="card-title">健康</h3>
-                <p class="card-subtitle">健康摘要</p>
-              </div>
-              <span class="status-badge {statusTone(health?.status || (health?.healthy ? 'healthy' : 'unknown'))}">
-                {safeText(health?.status, healthStatus() ? '正常' : '未知')}
-              </span>
-            </div>
-            <div class="card-body status-stack">
-              <div class="status-row">
-                <div>
-                  <strong>健康状态</strong>
-                  <div class="muted">{health?.reasons?.length ? health.reasons.join(' · ') : '无额外原因'}</div>
-                </div>
-                <span class="status-badge {healthStatus() ? 'good' : 'bad'}">{healthStatus() ? '正常' : '异常'}</span>
-              </div>
-              <div class="status-row">
-                <div>
-                  <strong>平均延迟</strong>
-                  <div class="muted">{(health?.average_latency_ms ?? 0).toFixed(1)} ms</div>
-                </div>
-                <span class="status-badge info">延迟</span>
-              </div>
-            </div>
-          </div>
-
-          <div class="card">
-            <div class="card-header">
-              <div>
-                <h3 class="card-title">就绪</h3>
-                <p class="card-subtitle">依赖就绪</p>
-              </div>
-              <span class="status-badge {statusTone(ready?.ready ? 'ready' : 'misconfigured')}">{ready?.ready ? '就绪' : '阻塞'}</span>
-            </div>
-            <div class="card-body status-stack">
-              {#each runtimeRows() as row}
-                <div class="status-row">
-                  <div>
-                    <strong>{row.label}</strong>
-                    <div class="muted">{safeText(row.data?.reason || row.data?.status, '未知')}</div>
-                  </div>
-                  <span class="status-badge {statusTone(row.data?.status || row.data?.state || 'info')}">
-                    {safeText(row.data?.status || row.data?.state, '未知')}
-                  </span>
-                </div>
-              {/each}
-            </div>
-          </div>
-
-          <div class="card">
-            <div class="card-header">
-              <div>
-                <h3 class="card-title">Provider 指标</h3>
-                <p class="card-subtitle">Embedding、LLM、retrieval。</p>
-              </div>
-            </div>
-            <div class="card-body status-stack">
-              {#each providerRows().slice(0, 4) as provider}
-                <div class="status-row">
-                  <div>
-                    <strong>{provider.name}</strong>
-                    <div class="muted">请求 {provider.stats.count} · 错误 {provider.stats.error_count}</div>
-                  </div>
-                  <span class="status-badge info">{provider.stats.average_latency_ms.toFixed(1)} ms</span>
-                </div>
-              {:else}
-                <div class="empty-state">暂无 provider 指标，先跑几次检索或对话。</div>
-              {/each}
-            </div>
-          </div>
-        </div>
-      </section>
-    {/if}
 
     {#if activeSection === 'documents'}
       <section class="section">
@@ -1335,53 +1215,36 @@
           </div>
 
           {#if searchResults.length || searchSummary}
-            <div class="grid-2">
-              <div class="card">
-                <div class="card-header">
-                  <div>
-                    <h3 class="card-title">搜索结果</h3>
-                    <p class="card-subtitle">{searchResults.length} 条命中</p>
-                  </div>
-                </div>
-                <div class="card-body result-list">
-                  {#if searchSummary}
-                    <div class="result-card">
-                      <span class="result-score">LLM Summary</span>
-                      <div class="result-content">{searchSummary}</div>
-                    </div>
-                  {/if}
-                  {#if searchResults.length}
-                    {#each searchResults as result}
-                      <div class="result-card">
-                        <div class="toolbar">
-                          <div>
-                            <strong>{safeText(result.filename || result.source || 'result')}</strong>
-                            <div class="meta">{JSON.stringify(result.metadata || {})}</div>
-                          </div>
-                          <span class="result-score">{(Number(result.score || 0) * 100).toFixed(1)}%</span>
-                        </div>
-                        <div class="result-content">{clampText(result.content, 360)}</div>
-                      </div>
-                    {/each}
-                  {:else}
-                    <div class="empty-state">没有搜索结果。</div>
-                  {/if}
+            <div class="card">
+              <div class="card-header">
+                <div>
+                  <h3 class="card-title">搜索结果</h3>
+                  <p class="card-subtitle">{searchResults.length} 条命中</p>
                 </div>
               </div>
-              <div class="card">
-                <div class="card-header">
-                  <div>
-                    <h3 class="card-title">集合同步</h3>
-                    <p class="card-subtitle">刷新后端集合列表。</p>
+              <div class="card-body result-list">
+                {#if searchSummary}
+                  <div class="result-card">
+                    <span class="result-score">摘要</span>
+                    <div class="result-content">{searchSummary}</div>
                   </div>
-                </div>
-                <div class="card-body">
-                  <div class="collection-row">
-                    {#each collections as collection}
-                      <span class="collection-chip">{collection}</span>
-                    {/each}
-                  </div>
-                </div>
+                {/if}
+                {#if searchResults.length}
+                  {#each searchResults as result}
+                    <div class="result-card">
+                      <div class="toolbar">
+                        <div>
+                          <strong>{safeText(result.filename || result.source || '结果')}</strong>
+                          <div class="meta">{JSON.stringify(result.metadata || {})}</div>
+                        </div>
+                        <span class="result-score">{(Number(result.score || 0) * 100).toFixed(1)}%</span>
+                      </div>
+                      <div class="result-content">{clampText(result.content, 360)}</div>
+                    </div>
+                  {/each}
+                {:else}
+                  <div class="empty-state">没有搜索结果。</div>
+                {/if}
               </div>
             </div>
           {/if}
