@@ -960,66 +960,52 @@
   </aside>
 
   <main class="content">
-    <section class="hero">
-      <div class="hero-copy">
-        <div class="hero-kicker">控制台</div>
-        <h2 class="hero-title">统一管理 RAG 服务。</h2>
-        <p class="hero-subtitle">上传文档、修改配置、查看状态。</p>
-        <div class="hero-actions">
-          <button class="button primary" on:click={refreshActiveView} disabled={overviewBusy || statusBusy || configBusy || manageBusy}>
-            刷新当前视图
-          </button>
-          <button class="button ghost" on:click={refreshCollections}>
-            刷新集合
-          </button>
+    {#if activeSection === 'overview'}
+      <section class="section">
+        <div class="section-head">
+          <div>
+            <h2>运行概览</h2>
+            <p>状态、请求、集合、版本。</p>
+          </div>
+          <div class="toolbar-group">
+            <span class="pill info"><strong>{collectionSummary()}</strong><span>集合</span></span>
+            <span class="pill good"><strong>{healthStatus() ? '正常' : '降级'}</strong><span>健康</span></span>
+            <span class="pill {readyStatus() ? 'good' : 'bad'}"><strong>{readyStatus() ? '就绪' : '未就绪'}</strong><span>状态</span></span>
+          </div>
         </div>
-      </div>
-    </section>
 
-    <section class="section">
-      <div class="section-head">
-        <div>
-          <h2>运行概览</h2>
-          <p>状态、请求、集合、版本。</p>
-        </div>
-        <div class="toolbar-group">
-          <span class="pill info"><strong>{collectionSummary()}</strong><span>集合</span></span>
-          <span class="pill good"><strong>{healthStatus() ? '正常' : '降级'}</strong><span>健康</span></span>
-          <span class="pill {readyStatus() ? 'good' : 'bad'}"><strong>{readyStatus() ? '就绪' : '未就绪'}</strong><span>状态</span></span>
-        </div>
-      </div>
-
-      <div class="grid-4">
-        <div class="card">
-          <div class="metric">
-            <div class="metric-label">请求总数</div>
-            <div class="metric-value">{metrics?.total_requests ?? 0}</div>
-            <div class="metric-meta">{metricSummary()}</div>
+        <div class="grid-4">
+          <div class="card">
+            <div class="metric">
+              <div class="metric-label">请求总数</div>
+              <div class="metric-value">{metrics?.total_requests ?? 0}</div>
+              <div class="metric-meta">{metricSummary()}</div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="metric">
+              <div class="metric-label">平均延迟</div>
+              <div class="metric-value">{(metrics?.average_latency_ms ?? 0).toFixed(1)} ms</div>
+              <div class="metric-meta">P50/P95/P99 见下方指标明细</div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="metric">
+              <div class="metric-label">可用集合</div>
+              <div class="metric-value">{collections.length}</div>
+              <div class="metric-meta">选中: {selectedCollection}</div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="metric">
+              <div class="metric-label">配置版本</div>
+              <div class="metric-value">{ready?.config_revision ?? health?.config_revision ?? '当前'}</div>
+              <div class="metric-meta">当前配置版本</div>
+            </div>
           </div>
         </div>
-        <div class="card">
-          <div class="metric">
-            <div class="metric-label">平均延迟</div>
-            <div class="metric-value">{(metrics?.average_latency_ms ?? 0).toFixed(1)} ms</div>
-            <div class="metric-meta">P50/P95/P99 见下方指标明细</div>
-          </div>
-        </div>
-        <div class="card">
-          <div class="metric">
-            <div class="metric-label">可用集合</div>
-            <div class="metric-value">{collections.length}</div>
-            <div class="metric-meta">选中: {selectedCollection}</div>
-          </div>
-        </div>
-        <div class="card">
-          <div class="metric">
-            <div class="metric-label">配置版本</div>
-            <div class="metric-value">{ready?.config_revision ?? health?.config_revision ?? '当前'}</div>
-            <div class="metric-meta">当前配置版本</div>
-          </div>
-        </div>
-      </div>
-    </section>
+      </section>
+    {/if}
 
     {#if activeSection === 'documents'}
       <section class="section">
@@ -1202,7 +1188,7 @@
                   </div>
                   <div class="chat-input-row">
                     <textarea bind:value={chatInput} placeholder="输入问题后点击发送..." on:keydown={(event) => event.key === 'Enter' && (event.metaKey || event.ctrlKey) && sendChat()}></textarea>
-                    <div class="hero-actions" style="justify-content:flex-end;">
+                    <div class="card-actions" style="justify-content:flex-end;">
                       <button class="button ghost" on:click={() => (chatMessages = chatMessages.slice(0, 1))}>清空</button>
                       <button class="button success" on:click={sendChat} disabled={chatBusy}>
                         {chatBusy ? '发送中...' : '发送'}

@@ -212,70 +212,6 @@ a {
   gap: 24px;
 }
 
-.hero {
-  position: relative;
-  overflow: hidden;
-  border-radius: 28px;
-  padding: 28px;
-  background: linear-gradient(140deg, rgba(255, 254, 249, 0.96), rgba(250, 243, 232, 0.9));
-  border: 1px solid rgba(255, 255, 255, 0.82);
-  box-shadow: var(--shadow);
-}
-
-.hero::after {
-  content: '';
-  position: absolute;
-  inset: auto -70px -90px auto;
-  width: 240px;
-  height: 240px;
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(15, 118, 110, 0.18), rgba(15, 118, 110, 0));
-  pointer-events: none;
-}
-
-.hero-copy {
-  display: grid;
-  gap: 14px;
-}
-
-.hero-kicker {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  width: fit-content;
-  padding: 0.42rem 0.8rem;
-  border-radius: 999px;
-  background: rgba(15, 118, 110, 0.1);
-  color: var(--primary-strong);
-  font-size: 0.8rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.hero-title {
-  margin: 0;
-  font-size: clamp(2rem, 3vw, 3.8rem);
-  line-height: 1.02;
-  letter-spacing: -0.04em;
-  max-width: 12ch;
-  font-family: 'Space Grotesk', 'IBM Plex Sans', sans-serif;
-}
-
-.hero-subtitle {
-  margin: 0;
-  max-width: 70ch;
-  color: var(--muted);
-  font-size: 1rem;
-  line-height: 1.7;
-}
-
-.hero-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-
 .toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -885,10 +821,6 @@ a {
   .content,
   .sidebar {
     padding: 16px;
-  }
-
-  .hero {
-    padding: 20px;
   }
 
   .card-header,
