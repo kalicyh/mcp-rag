@@ -4,10 +4,10 @@
 
   const STORAGE_KEY = 'mcp-rag-dashboard-state';
   const sections = [
-    { id: 'overview', title: '总览', subtitle: '运行态与关键指标' },
-    { id: 'documents', title: '文档管理', subtitle: '上传、搜索、对话、删除' },
-    { id: 'config', title: '配置中心', subtitle: '检索、模型、限流、配额' },
-    { id: 'status', title: '服务状态', subtitle: 'Health, Ready, Metrics' },
+    { id: 'overview', title: '总览', subtitle: '状态和指标' },
+    { id: 'documents', title: '文档管理', subtitle: '上传、检索、删除' },
+    { id: 'config', title: '配置中心', subtitle: '配置和策略' },
+    { id: 'status', title: '服务状态', subtitle: '健康、就绪、指标' },
   ];
   const documentModes = [
     { id: 'ingest', title: '导入' },
@@ -198,7 +198,7 @@
   let chatMessages = [
     {
       role: 'assistant',
-      content: '欢迎进入 MCP-RAG 管理后台。先选择集合，再上传资料、调整配置或查看运行状态。',
+      content: '先选集合，再上传文档、修改配置或查看状态。',
     },
   ];
   let toasts = [];
@@ -885,10 +885,10 @@
 </script>
 
 <svelte:head>
-  <title>MCP-RAG Admin Dashboard</title>
+  <title>MCP-RAG 控制台</title>
   <meta
     name="description"
-    content="A static Svelte dashboard for MCP-RAG document management, configuration, and service health."
+    content="MCP-RAG admin dashboard for documents, config, and service status."
   />
 </svelte:head>
 
@@ -896,7 +896,7 @@
   <div class="toast-stack" aria-live="polite">
     <div class="toast info">
       <strong>加载中</strong>
-      <div class="muted">正在拉取服务状态与配置。</div>
+      <div class="muted">正在读取服务状态。</div>
     </div>
   </div>
 {/if}
@@ -915,13 +915,13 @@
     <div class="brand">
       <div class="brand-mark">MR</div>
       <div class="brand-copy">
-        <h1>MCP-RAG Console</h1>
-        <p>管理员面板 · 静态前端</p>
+        <h1>MCP-RAG 控制台</h1>
+        <p>统一后台</p>
       </div>
     </div>
 
     <div class="sidebar-section">
-      <div class="sidebar-label">Navigation</div>
+      <div class="sidebar-label">导航</div>
       <div class="nav-list">
         {#each sections as section}
           <button
@@ -939,7 +939,7 @@
     </div>
 
     <div class="sidebar-section">
-      <div class="sidebar-label">Access Context</div>
+      <div class="sidebar-label">请求上下文</div>
       <div class="field">
         <div class="field-label">Collection</div>
         <select bind:value={selectedCollection} on:change={() => setCollection(selectedCollection)}>
@@ -958,21 +958,21 @@
       </div>
       <div class="field">
         <div class="field-label">API Key</div>
-        <input bind:value={identity.apiKey} placeholder="optional" />
+        <input bind:value={identity.apiKey} placeholder="可选" />
       </div>
-      <div class="field-help">这些值会被附带到集合、搜索、上传、删除等请求里，方便模拟租户上下文。</div>
+      <div class="field-help">这些值会附带到请求里，用来区分租户。</div>
     </div>
 
     <div class="sidebar-footer">
       <div class="pill {readyStatus() ? 'good' : 'bad'}">
-        <strong>{readyStatus() ? 'READY' : 'NOT READY'}</strong>
-        <span>服务可用性</span>
+        <strong>{readyStatus() ? '就绪' : '未就绪'}</strong>
+        <span>就绪状态</span>
       </div>
       <div class="pill {healthStatus() ? 'good' : 'warn'}">
-        <strong>{healthStatus() ? 'HEALTHY' : 'DEGRADED'}</strong>
-        <span>健康摘要</span>
+        <strong>{healthStatus() ? '正常' : '降级'}</strong>
+        <span>健康状态</span>
       </div>
-      <div class="muted small">API Base: <span class="mono">{API_BASE || 'same-origin'}</span></div>
+      <div class="muted small">API 地址: <span class="mono">{API_BASE || '同源'}</span></div>
     </div>
   </aside>
 
@@ -980,11 +980,9 @@
     <section class="hero">
       <div class="hero-grid">
         <div class="hero-copy">
-          <div class="hero-kicker">MCP-RAG Admin Dashboard</div>
-          <h2 class="hero-title">文档、配置、状态都放到一个可运维面板里。</h2>
-          <p class="hero-subtitle">
-            这是一个静态编译的 Svelte 前端，面向管理员视角，覆盖文档导入、检索、内容管理、配置热更新和服务健康检查。
-          </p>
+          <div class="hero-kicker">控制台</div>
+          <h2 class="hero-title">统一管理 RAG 服务。</h2>
+          <p class="hero-subtitle">上传文档、修改配置、查看状态。</p>
           <div class="hero-actions">
             <button class="button primary" on:click={refreshActiveView} disabled={overviewBusy || statusBusy || configBusy || manageBusy}>
               刷新当前视图
@@ -993,21 +991,21 @@
               刷新总览
             </button>
             <button class="button ghost" on:click={refreshCollections}>
-              同步集合
+              刷新集合
             </button>
           </div>
         </div>
 
         <div class="card soft">
           <div class="metric">
-            <div class="metric-label">当前聚合视图</div>
+            <div class="metric-label">当前页面</div>
             <div class="metric-value">{activeSection}</div>
             <div class="metric-meta">
               {collectionSummary()} · {savedCollection}
             </div>
             <div class="divider"></div>
             <div class="metric-meta">最后刷新: {lastRefreshAt ? lastRefreshAt.toLocaleString() : '未刷新'}</div>
-            <div class="metric-meta">运行模式: 静态构建 + 同域 API</div>
+            <div class="metric-meta">构建方式: 静态前端 + 同域 API</div>
           </div>
         </div>
       </div>
@@ -1017,12 +1015,12 @@
       <div class="section-head">
         <div>
           <h2>运行概览</h2>
-          <p>把健康度、请求量、集合数和当前配置状态放在一屏里。</p>
+          <p>状态、请求、集合、版本。</p>
         </div>
         <div class="toolbar-group">
           <span class="pill info"><strong>{collectionSummary()}</strong><span>集合</span></span>
-          <span class="pill good"><strong>{healthStatus() ? 'LIVE' : 'SLOW'}</strong><span>健康</span></span>
-          <span class="pill {readyStatus() ? 'good' : 'bad'}"><strong>{readyStatus() ? 'READY' : 'DOWN'}</strong><span>就绪</span></span>
+          <span class="pill good"><strong>{healthStatus() ? '正常' : '降级'}</strong><span>健康</span></span>
+          <span class="pill {readyStatus() ? 'good' : 'bad'}"><strong>{readyStatus() ? '就绪' : '未就绪'}</strong><span>状态</span></span>
         </div>
       </div>
 
@@ -1051,8 +1049,8 @@
         <div class="card">
           <div class="metric">
             <div class="metric-label">配置版本</div>
-            <div class="metric-value">{ready?.config_revision ?? health?.config_revision ?? 'live'}</div>
-            <div class="metric-meta">热更新后的运行态</div>
+            <div class="metric-value">{ready?.config_revision ?? health?.config_revision ?? '当前'}</div>
+            <div class="metric-meta">当前配置版本</div>
           </div>
         </div>
       </div>
@@ -1063,18 +1061,18 @@
         <div class="section-head">
           <div>
             <h2>状态摘要</h2>
-            <p>实时展示 ready / health / runtime / metrics 结果。</p>
+            <p>ready、health、runtime、metrics。</p>
           </div>
         </div>
         <div class="grid-3">
           <div class="card">
             <div class="card-header">
               <div>
-                <h3 class="card-title">Health</h3>
-                <p class="card-subtitle">快速健康摘要</p>
+                <h3 class="card-title">健康</h3>
+                <p class="card-subtitle">健康摘要</p>
               </div>
               <span class="status-badge {statusTone(health?.status || (health?.healthy ? 'healthy' : 'unknown'))}">
-                {safeText(health?.status || (health?.healthy ? 'healthy' : 'unknown'))}
+                {safeText(health?.status, healthStatus() ? '正常' : '未知')}
               </span>
             </div>
             <div class="card-body status-stack">
@@ -1083,14 +1081,14 @@
                   <strong>健康状态</strong>
                   <div class="muted">{health?.reasons?.length ? health.reasons.join(' · ') : '无额外原因'}</div>
                 </div>
-                <span class="status-badge {healthStatus() ? 'good' : 'bad'}">{healthStatus() ? 'healthy' : 'unhealthy'}</span>
+                <span class="status-badge {healthStatus() ? 'good' : 'bad'}">{healthStatus() ? '正常' : '异常'}</span>
               </div>
               <div class="status-row">
                 <div>
                   <strong>平均延迟</strong>
                   <div class="muted">{(health?.average_latency_ms ?? 0).toFixed(1)} ms</div>
                 </div>
-                <span class="status-badge info">latency</span>
+                <span class="status-badge info">延迟</span>
               </div>
             </div>
           </div>
@@ -1098,20 +1096,20 @@
           <div class="card">
             <div class="card-header">
               <div>
-                <h3 class="card-title">Ready</h3>
-                <p class="card-subtitle">依赖检查与运行时就绪</p>
+                <h3 class="card-title">就绪</h3>
+                <p class="card-subtitle">依赖就绪</p>
               </div>
-              <span class="status-badge {statusTone(ready?.ready ? 'ready' : 'misconfigured')}">{ready?.ready ? 'ready' : 'blocked'}</span>
+              <span class="status-badge {statusTone(ready?.ready ? 'ready' : 'misconfigured')}">{ready?.ready ? '就绪' : '阻塞'}</span>
             </div>
             <div class="card-body status-stack">
               {#each runtimeRows() as row}
                 <div class="status-row">
                   <div>
                     <strong>{row.label}</strong>
-                    <div class="muted">{safeText(row.data?.reason || row.data?.status || 'unknown')}</div>
+                    <div class="muted">{safeText(row.data?.reason || row.data?.status, '未知')}</div>
                   </div>
                   <span class="status-badge {statusTone(row.data?.status || row.data?.state || 'info')}">
-                    {safeText(row.data?.status || row.data?.state || 'unknown')}
+                    {safeText(row.data?.status || row.data?.state, '未知')}
                   </span>
                 </div>
               {/each}
@@ -1121,8 +1119,8 @@
           <div class="card">
             <div class="card-header">
               <div>
-                <h3 class="card-title">Provider Metrics</h3>
-                <p class="card-subtitle">Embedding / LLM / retrieval 细分</p>
+                <h3 class="card-title">Provider 指标</h3>
+                <p class="card-subtitle">Embedding、LLM、retrieval。</p>
               </div>
             </div>
             <div class="card-body status-stack">
@@ -1164,8 +1162,8 @@
             <div class="card">
               <div class="card-header">
                 <div>
-                  <h3 class="card-title">文件上传</h3>
-                  <p class="card-subtitle">拖拽文件，后台会自动处理成文档片段。</p>
+                <h3 class="card-title">文件上传</h3>
+                  <p class="card-subtitle">上传后自动切片入库。</p>
                 </div>
                 <div class="card-actions">
                   <button class="button secondary" on:click={openFilePicker}>选择文件</button>
@@ -1217,8 +1215,8 @@
             <div class="card">
               <div class="card-header">
                 <div>
-                  <h3 class="card-title">手工录入</h3>
-                  <p class="card-subtitle">适合快速补充说明、公告、提示词或临时资料。</p>
+                <h3 class="card-title">手工录入</h3>
+                  <p class="card-subtitle">快速补充短文本。</p>
                 </div>
               </div>
               <div class="card-body">
@@ -1256,8 +1254,8 @@
             <div class="card">
               <div class="card-header">
                 <div>
-                  <h3 class="card-title">检索</h3>
-                  <p class="card-subtitle">查询相似片段并展示 LLM 总结。</p>
+                <h3 class="card-title">检索</h3>
+                  <p class="card-subtitle">查片段并返回摘要。</p>
                 </div>
               </div>
               <div class="card-body">
@@ -1290,8 +1288,8 @@
             <div class="card">
               <div class="card-header">
                 <div>
-                  <h3 class="card-title">对话</h3>
-                  <p class="card-subtitle">基于检索结果进行上下文问答。</p>
+                <h3 class="card-title">对话</h3>
+                  <p class="card-subtitle">基于检索结果问答。</p>
                 </div>
               </div>
               <div class="card-body">
@@ -1374,7 +1372,7 @@
                 <div class="card-header">
                   <div>
                     <h3 class="card-title">集合同步</h3>
-                    <p class="card-subtitle">如果后端新增了集合，这里会显示出来。</p>
+                    <p class="card-subtitle">刷新后端集合列表。</p>
                   </div>
                 </div>
                 <div class="card-body">
@@ -1394,7 +1392,7 @@
             <div class="card-header">
               <div>
                 <h3 class="card-title">内容管理</h3>
-                <p class="card-subtitle">文件视图与片段视图可切换，支持删除和按文件过滤。</p>
+                <p class="card-subtitle">查看文件、片段并删除。</p>
               </div>
               <div class="card-actions">
                 <button class="button secondary" on:click={refreshDocuments} disabled={manageBusy}>{manageBusy ? '刷新中...' : '刷新列表'}</button>
@@ -1498,7 +1496,7 @@
             <div class="card-header">
               <div>
                 <h3 class="card-title">检索与模型</h3>
-                <p class="card-subtitle">最常用的运行参数，直接对检索和问答生效。</p>
+                <p class="card-subtitle">常用检索和模型参数。</p>
               </div>
             </div>
             <div class="card-body">
@@ -1553,7 +1551,7 @@
             <div class="card-header">
               <div>
                 <h3 class="card-title">缓存与安全</h3>
-                <p class="card-subtitle">用于多租户隔离、访问控制和请求级缓存。</p>
+                <p class="card-subtitle">缓存、鉴权、租户 key。</p>
               </div>
             </div>
             <div class="card-body">
@@ -1594,8 +1592,8 @@
           <div class="card">
             <div class="card-header">
               <div>
-                <h3 class="card-title">Rate Limit / Quota</h3>
-                <p class="card-subtitle">控制单窗口请求数和导入/索引上限。</p>
+                <h3 class="card-title">限流与配额</h3>
+                <p class="card-subtitle">控制请求和索引上限。</p>
               </div>
             </div>
             <div class="card-body">
@@ -1651,7 +1649,7 @@
             <div class="card-header">
               <div>
                 <h3 class="card-title">观测与 Provider Budget</h3>
-                <p class="card-subtitle">调节健康阈值、分位数窗口和 provider 熔断。</p>
+                <p class="card-subtitle">健康阈值和 provider 预算。</p>
               </div>
             </div>
             <div class="card-body">
@@ -1677,7 +1675,7 @@
               </div>
               <div class="divider" style="margin: 18px 0;"></div>
               <div class="field-switch">
-                <label class="collection-chip"><input type="checkbox" bind:checked={configDraft.provider_budget.enabled} /> Provider Budget Enabled</label>
+                <label class="collection-chip"><input type="checkbox" bind:checked={configDraft.provider_budget.enabled} /> 启用 Provider Budget</label>
               </div>
               <div class="field-row" style="margin-top: 14px;">
                 <div class="field">
@@ -1716,8 +1714,8 @@
         <div class="card">
           <div class="card-header">
             <div>
-              <h3 class="card-title">Advanced</h3>
-              <p class="card-subtitle">provider_configs 保持原样，适合直接贴 JSON。</p>
+              <h3 class="card-title">高级配置</h3>
+              <p class="card-subtitle">直接编辑 provider_configs JSON。</p>
             </div>
           </div>
           <div class="card-body">
@@ -1735,7 +1733,7 @@
         <div class="section-head">
           <div>
             <h2>服务状态</h2>
-            <p>查看 health、ready、metrics 和 provider 侧的运行轨迹。</p>
+            <p>查看 health、ready、metrics 和 provider 状态。</p>
           </div>
           <div class="card-actions">
             <button class="button secondary" on:click={refreshStatus} disabled={statusBusy}>{statusBusy ? '刷新中...' : '刷新状态'}</button>
@@ -1745,21 +1743,21 @@
         <div class="grid-3">
           <div class="card">
             <div class="metric">
-              <div class="metric-label">Health</div>
-              <div class="metric-value">{safeText(health?.status, healthStatus() ? 'healthy' : 'unknown')}</div>
+              <div class="metric-label">健康</div>
+              <div class="metric-value">{safeText(health?.status, healthStatus() ? '正常' : '未知')}</div>
               <div class="metric-meta">{health?.reasons?.length ? health.reasons.join(' · ') : '无异常原因'}</div>
             </div>
           </div>
           <div class="card">
             <div class="metric">
-              <div class="metric-label">Ready</div>
-              <div class="metric-value">{ready?.ready ? 'YES' : 'NO'}</div>
+              <div class="metric-label">就绪</div>
+              <div class="metric-value">{ready?.ready ? '是' : '否'}</div>
               <div class="metric-meta">{ready?.ready ? '依赖满足' : '依赖检查未通过'}</div>
             </div>
           </div>
           <div class="card">
             <div class="metric">
-              <div class="metric-label">Error Rate</div>
+              <div class="metric-label">错误率</div>
               <div class="metric-value">{pct((metrics?.error_count ?? 0) / Math.max(metrics?.total_requests ?? 1, 1))}</div>
               <div class="metric-meta">总请求 {metrics?.total_requests ?? 0}</div>
             </div>
@@ -1770,8 +1768,8 @@
           <div class="card">
             <div class="card-header">
               <div>
-                <h3 class="card-title">Runtime Details</h3>
-                <p class="card-subtitle">ready / health 的依赖树。</p>
+                <h3 class="card-title">运行时详情</h3>
+                <p class="card-subtitle">依赖状态。</p>
               </div>
             </div>
             <div class="card-body status-stack">
@@ -1780,11 +1778,11 @@
                   <div>
                     <strong>{row.label}</strong>
                     <div class="muted">
-                      {safeText(row.data?.provider || row.data?.name || row.data?.reason || row.data?.status, 'unknown')}
+                      {safeText(row.data?.provider || row.data?.name || row.data?.reason || row.data?.status, '未知')}
                     </div>
                   </div>
                   <span class="status-badge {statusTone(row.data?.status || row.data?.state || 'info')}">
-                    {safeText(row.data?.status || row.data?.state || 'unknown')}
+                    {safeText(row.data?.status || row.data?.state, '未知')}
                   </span>
                 </div>
               {/each}
@@ -1794,8 +1792,8 @@
           <div class="card">
             <div class="card-header">
               <div>
-                <h3 class="card-title">Provider Health</h3>
-                <p class="card-subtitle">查看 embedding / llm / retrieval 的延迟和错误。</p>
+                <h3 class="card-title">Provider 健康</h3>
+                <p class="card-subtitle">延迟和错误。</p>
               </div>
             </div>
             <div class="card-body status-stack">
@@ -1804,7 +1802,7 @@
                   <div>
                     <strong>{provider.name}</strong>
                     <div class="muted">
-                      count {provider.stats.count} · errors {provider.stats.error_count} · p95 {provider.stats.p95_latency_ms.toFixed(1)} ms
+                      请求 {provider.stats.count} · 错误 {provider.stats.error_count} · p95 {provider.stats.p95_latency_ms.toFixed(1)} ms
                     </div>
                   </div>
                   <span class="status-badge {provider.stats.error_count > 0 ? 'warn' : 'good'}">
@@ -1821,15 +1819,15 @@
         <div class="card">
           <div class="card-header">
             <div>
-              <h3 class="card-title">Operation Metrics</h3>
-              <p class="card-subtitle">请求级别的计数与分位数。</p>
+              <h3 class="card-title">请求指标</h3>
+              <p class="card-subtitle">计数和分位数。</p>
             </div>
           </div>
           <div class="card-body">
             <div class="table">
               <div class="table-row header">
-                <span>Operation</span>
-                <span>Count / Error</span>
+                <span>操作</span>
+                <span>请求 / 错误</span>
                 <span>P50 / P95 / P99</span>
               </div>
               {#each operationRows() as row}

@@ -1,22 +1,22 @@
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
 
 :root {
-  --bg: #f3efe7;
-  --bg-deep: #e9e2d6;
-  --surface: rgba(255, 255, 255, 0.86);
-  --surface-strong: #ffffff;
-  --surface-soft: rgba(15, 23, 42, 0.04);
-  --text: #0f172a;
-  --muted: #64748b;
-  --border: rgba(15, 23, 42, 0.1);
-  --shadow: 0 24px 60px rgba(15, 23, 42, 0.12);
-  --primary: #0f766e;
-  --primary-strong: #115e59;
-  --accent: #f59e0b;
-  --danger: #dc2626;
-  --success: #15803d;
-  --warning: #b45309;
-  --info: #2563eb;
+  --bg: #f8f3ea;
+  --bg-deep: #f0e6d8;
+  --surface: rgba(255, 252, 246, 0.9);
+  --surface-strong: #fffdf9;
+  --surface-soft: rgba(43, 124, 114, 0.08);
+  --text: #17303b;
+  --muted: #6f8086;
+  --border: rgba(23, 48, 59, 0.12);
+  --shadow: 0 22px 48px rgba(156, 133, 96, 0.16);
+  --primary: #2b7c72;
+  --primary-strong: #205e57;
+  --accent: #d69a2d;
+  --danger: #cc4b37;
+  --success: #1f8a56;
+  --warning: #b36b16;
+  --info: #2c6fcf;
   --radius-xl: 24px;
   --radius-lg: 18px;
   --radius-md: 14px;
@@ -29,9 +29,9 @@ body {
   min-height: 100%;
   color: var(--text);
   background:
-    radial-gradient(circle at top left, rgba(15, 118, 110, 0.18), transparent 30%),
-    radial-gradient(circle at top right, rgba(245, 158, 11, 0.12), transparent 24%),
-    linear-gradient(180deg, #f9f6f1 0%, var(--bg) 100%);
+    radial-gradient(circle at top left, rgba(43, 124, 114, 0.16), transparent 30%),
+    radial-gradient(circle at top right, rgba(214, 154, 45, 0.14), transparent 24%),
+    linear-gradient(180deg, #fcf8f1 0%, var(--bg) 100%);
   font-family: 'IBM Plex Sans', 'Segoe UI', sans-serif;
 }
 
@@ -105,13 +105,13 @@ a {
   top: 0;
   height: 100vh;
   padding: 28px 22px;
-  background: linear-gradient(180deg, rgba(15, 23, 42, 0.97), rgba(15, 23, 42, 0.92));
-  color: #e2e8f0;
-  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  background: linear-gradient(180deg, rgba(255, 250, 242, 0.95), rgba(247, 240, 229, 0.98));
+  color: var(--text);
+  border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   gap: 22px;
-  box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.04);
+  box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.65);
 }
 
 .brand {
@@ -128,9 +128,9 @@ a {
   place-items: center;
   font-weight: 800;
   letter-spacing: 0.08em;
-  color: #0f172a;
-  background: linear-gradient(135deg, #fde68a, #34d399);
-  box-shadow: 0 18px 30px rgba(52, 211, 153, 0.22);
+  color: var(--text);
+  background: linear-gradient(135deg, #ffe7a8, #8fd3c5);
+  box-shadow: 0 16px 28px rgba(43, 124, 114, 0.16);
 }
 
 .brand-copy h1 {
@@ -144,7 +144,7 @@ a {
 .brand-copy p {
   margin: 0.2rem 0 0;
   font-size: 0.84rem;
-  color: rgba(226, 232, 240, 0.68);
+  color: var(--muted);
 }
 
 .sidebar-section {
@@ -156,7 +156,7 @@ a {
   font-size: 0.75rem;
   text-transform: uppercase;
   letter-spacing: 0.16em;
-  color: rgba(226, 232, 240, 0.54);
+  color: rgba(23, 48, 59, 0.46);
 }
 
 .nav-list {
@@ -171,23 +171,24 @@ a {
   gap: 12px;
   width: 100%;
   padding: 0.9rem 1rem;
-  border: 1px solid transparent;
+  border: 1px solid rgba(23, 48, 59, 0.05);
   border-radius: 16px;
-  color: rgba(226, 232, 240, 0.82);
-  background: transparent;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.56);
   transition: transform 0.18s ease, background 0.18s ease, border-color 0.18s ease;
 }
 
 .nav-item:hover {
   transform: translateX(3px);
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.86);
+  border-color: rgba(43, 124, 114, 0.16);
 }
 
 .nav-item.active {
-  color: #fff;
-  background: linear-gradient(135deg, rgba(20, 184, 166, 0.2), rgba(245, 158, 11, 0.12));
-  border-color: rgba(255, 255, 255, 0.08);
-  box-shadow: 0 12px 30px rgba(15, 118, 110, 0.18);
+  color: var(--text);
+  background: linear-gradient(135deg, rgba(43, 124, 114, 0.14), rgba(214, 154, 45, 0.16));
+  border-color: rgba(43, 124, 114, 0.18);
+  box-shadow: 0 12px 24px rgba(43, 124, 114, 0.12);
 }
 
 .nav-title {
@@ -202,12 +203,12 @@ a {
 
 .nav-title span {
   font-size: 0.8rem;
-  color: rgba(226, 232, 240, 0.65);
+  color: var(--muted);
 }
 
 .nav-badge {
   font-size: 0.72rem;
-  color: rgba(226, 232, 240, 0.7);
+  color: rgba(23, 48, 59, 0.52);
 }
 
 .sidebar-footer {
@@ -215,11 +216,11 @@ a {
   display: grid;
   gap: 10px;
   padding-top: 18px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-top: 1px solid var(--border);
 }
 
 .sidebar-footer .muted {
-  color: rgba(226, 232, 240, 0.68);
+  color: var(--muted);
 }
 
 .content {
@@ -233,8 +234,8 @@ a {
   overflow: hidden;
   border-radius: 28px;
   padding: 28px;
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.92), rgba(255, 250, 240, 0.78));
-  border: 1px solid rgba(255, 255, 255, 0.7);
+  background: linear-gradient(140deg, rgba(255, 254, 249, 0.96), rgba(250, 243, 232, 0.9));
+  border: 1px solid rgba(255, 255, 255, 0.82);
   box-shadow: var(--shadow);
 }
 
@@ -320,9 +321,9 @@ a {
   gap: 8px;
   padding: 0.52rem 0.85rem;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.72);
-  border: 1px solid rgba(15, 23, 42, 0.08);
-  color: var(--muted);
+  background: rgba(255, 253, 249, 0.88);
+  border: 1px solid var(--border);
+  color: var(--text);
   font-size: 0.86rem;
 }
 
@@ -394,14 +395,14 @@ a {
 
 .card {
   background: var(--surface);
-  border: 1px solid rgba(255, 255, 255, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.86);
   border-radius: var(--radius-xl);
   box-shadow: var(--shadow);
   backdrop-filter: blur(18px);
 }
 
 .card.soft {
-  background: rgba(255, 255, 255, 0.72);
+  background: rgba(255, 251, 245, 0.82);
 }
 
 .card-header {
