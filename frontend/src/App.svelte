@@ -859,20 +859,25 @@
     ].filter((row) => row.data);
   }
 
-  onMount(async () => {
+  onMount(() => {
     readState();
     syncLocation(activeSection, { replace: true });
-    const handlePopState = async () => {
+    const handlePopState = () => {
       const routedSection = sectionFromLocation();
       if (routedSection) {
         activeSection = routedSection;
         writeState();
       }
-      await refreshActiveView();
+      void refreshActiveView();
     };
     window.addEventListener('popstate', handlePopState);
-    await refreshAll();
-    loading = false;
+    void (async () => {
+      try {
+        await refreshAll();
+      } finally {
+        loading = false;
+      }
+    })();
     return () => {
       window.removeEventListener('popstate', handlePopState);
     };
