@@ -126,6 +126,10 @@ class RequestContext:
     transport: str = "internal"
     operation: str = "unknown"
     api_key: str | None = None
+    kb_id: int | None = None
+    kb_scope: str | None = None
+    kb_name: str | None = None
+    resolved_collection: str | None = None
     request_id: str = field(default_factory=_new_request_id)
     trace_id: str | None = None
     client_host: str | None = None
@@ -170,6 +174,10 @@ class RequestContext:
         user_id: int | None = None,
         agent_id: int | None = None,
         api_key: str | None = None,
+        kb_id: int | None = None,
+        kb_scope: str | None = None,
+        kb_name: str | None = None,
+        resolved_collection: str | None = None,
         operation: str = "request",
         subject: str | None = None,
     ) -> RequestContext:
@@ -191,6 +199,10 @@ class RequestContext:
             transport="http",
             operation=operation,
             api_key=_coerce_optional_text(api_key),
+            kb_id=_coerce_optional_int(kb_id),
+            kb_scope=_coerce_optional_text(kb_scope),
+            kb_name=_coerce_optional_text(kb_name),
+            resolved_collection=_coerce_optional_text(resolved_collection),
             request_id=request_id,
             trace_id=trace_id,
             client_host=client_host,
@@ -207,6 +219,10 @@ class RequestContext:
         user_id: int | None = None,
         agent_id: int | None = None,
         api_key: str | None = None,
+        kb_id: int | None = None,
+        kb_scope: str | None = None,
+        kb_name: str | None = None,
+        resolved_collection: str | None = None,
         operation: str = "mcp",
         subject: str | None = None,
     ) -> RequestContext:
@@ -223,6 +239,12 @@ class RequestContext:
             transport="mcp",
             operation=operation,
             api_key=_coerce_optional_text(api_key if api_key is not None else payload.get("api_key")),
+            kb_id=_coerce_optional_int(kb_id if kb_id is not None else payload.get("kb_id")),
+            kb_scope=_coerce_optional_text(kb_scope if kb_scope is not None else payload.get("scope")),
+            kb_name=_coerce_optional_text(kb_name if kb_name is not None else payload.get("kb_name")),
+            resolved_collection=_coerce_optional_text(
+                resolved_collection if resolved_collection is not None else payload.get("resolved_collection")
+            ),
             request_id=request_id,
             trace_id=trace_id,
             client_host=_coerce_optional_text(payload.get("client_host")),
@@ -242,6 +264,10 @@ def normalize_request_context(
     transport: str = "internal",
     operation: str = "internal",
     api_key: str | None = None,
+    kb_id: int | None = None,
+    kb_scope: str | None = None,
+    kb_name: str | None = None,
+    resolved_collection: str | None = None,
     subject: str | None = None,
     client_host: str | None = None,
     request_id: str | None = None,
@@ -249,12 +275,12 @@ def normalize_request_context(
 ) -> RequestContext:
     """Normalize arbitrary request identity payloads into `RequestContext`."""
 
-    resolved_collection = _coerce_optional_text(base_collection) or _coerce_optional_text(collection) or "default"
+    resolved_base_collection = _coerce_optional_text(base_collection) or _coerce_optional_text(collection) or "default"
 
     if isinstance(request_context, RequestContext):
         tenant_spec = normalize_tenant(
             request_context.tenant,
-            base_collection=resolved_collection,
+            base_collection=resolved_base_collection,
             user_id=user_id,
             agent_id=agent_id,
         )
@@ -263,6 +289,10 @@ def normalize_request_context(
             transport=request_context.transport or transport,
             operation=request_context.operation or operation,
             api_key=_coerce_optional_text(api_key) or request_context.api_key,
+            kb_id=_coerce_optional_int(kb_id) if kb_id is not None else request_context.kb_id,
+            kb_scope=_coerce_optional_text(kb_scope) or request_context.kb_scope,
+            kb_name=_coerce_optional_text(kb_name) or request_context.kb_name,
+            resolved_collection=_coerce_optional_text(resolved_collection) or request_context.resolved_collection,
             request_id=_coerce_optional_text(request_id) or request_context.request_id or _new_request_id(),
             trace_id=_coerce_optional_text(trace_id) or request_context.trace_id or request_context.request_id,
             client_host=_coerce_optional_text(client_host) or request_context.client_host,
@@ -277,6 +307,12 @@ def normalize_request_context(
         transport = _coerce_optional_text(request_context.get("transport")) or transport
         operation = _coerce_optional_text(request_context.get("operation")) or operation
         api_key = _coerce_optional_text(api_key) or _coerce_optional_text(request_context.get("api_key"))
+        kb_id = _coerce_optional_int(kb_id) if kb_id is not None else _coerce_optional_int(request_context.get("kb_id"))
+        kb_scope = _coerce_optional_text(kb_scope) or _coerce_optional_text(request_context.get("kb_scope", request_context.get("scope")))
+        kb_name = _coerce_optional_text(kb_name) or _coerce_optional_text(request_context.get("kb_name"))
+        resolved_collection = _coerce_optional_text(resolved_collection) or _coerce_optional_text(
+            request_context.get("resolved_collection")
+        )
         request_id = _coerce_optional_text(request_id) or _coerce_optional_text(request_context.get("request_id"))
         trace_id = _coerce_optional_text(trace_id) or _coerce_optional_text(request_context.get("trace_id"))
         client_host = _coerce_optional_text(client_host) or _coerce_optional_text(request_context.get("client_host"))
@@ -287,13 +323,17 @@ def normalize_request_context(
     return RequestContext(
         tenant=normalize_tenant(
             tenant,
-            base_collection=resolved_collection,
+            base_collection=resolved_base_collection,
             user_id=user_id,
             agent_id=agent_id,
         ),
         transport=_coerce_optional_text(transport) or "internal",
         operation=_coerce_optional_text(operation) or "internal",
         api_key=_coerce_optional_text(api_key),
+        kb_id=_coerce_optional_int(kb_id),
+        kb_scope=_coerce_optional_text(kb_scope),
+        kb_name=_coerce_optional_text(kb_name),
+        resolved_collection=_coerce_optional_text(resolved_collection),
         request_id=resolved_request_id,
         trace_id=resolved_trace_id,
         client_host=_coerce_optional_text(client_host),

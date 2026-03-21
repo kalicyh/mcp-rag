@@ -8,6 +8,7 @@ from .models import TenantContext
 
 _COLLECTION_RE = re.compile(r"^u(\d+)_a(\d+)_(.+)$")
 _USER_COLLECTION_RE = re.compile(r"^u(\d+)_(.+)$")
+_KNOWLEDGE_BASE_RE = re.compile(r"^kb_[A-Za-z0-9_.-]+$")
 _SANITIZE_RE = re.compile(r"[^A-Za-z0-9_.-]+")
 
 
@@ -64,6 +65,8 @@ def resolve_collection_name(
 ) -> str:
     """Resolve the actual collection name for a request."""
 
+    if _KNOWLEDGE_BASE_RE.match(collection_name or ""):
+        return collection_name
     if tenant is not None:
         return build_collection_name(
             base_collection=tenant.base_collection or collection_name,
@@ -75,4 +78,3 @@ def resolve_collection_name(
         user_id=user_id,
         agent_id=agent_id,
     )
-

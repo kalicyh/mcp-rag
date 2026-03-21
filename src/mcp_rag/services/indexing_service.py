@@ -33,8 +33,11 @@ class IndexingService:
             request.context,
             tenant=request.tenant,
             base_collection=request.collection,
+            kb_id=request.kb_id,
+            kb_scope=request.scope,
         )
         tenant = request_context.tenant.to_core()
+        collection_name = request_context.resolved_collection or request.collection
         processor = await self.runtime.ensure_document_processor()
         vector_store = await self.runtime.ensure_vector_store()
         embedding_model = await self.runtime.ensure_embedding_model()
@@ -56,10 +59,10 @@ class IndexingService:
         await vector_store.upsert_chunks(
             chunks,
             tenant=tenant,
-            collection_name=request.collection,
+            collection_name=collection_name,
         )
-        await self.runtime.refresh_keywords(request.collection, tenant)
-        self.runtime.invalidate_retrieval_scope(request.collection, tenant)
+        await self.runtime.refresh_keywords(collection_name, tenant)
+        self.runtime.invalidate_retrieval_scope(collection_name, tenant)
 
         return {
             "message": "Document added successfully",
@@ -81,6 +84,7 @@ class IndexingService:
             base_collection=collection,
         )
         tenant_spec = resolved_context.tenant
+        collection_name = resolved_context.resolved_collection or collection
         processor = await self.runtime.ensure_document_processor()
         vector_store = await self.runtime.ensure_vector_store()
         embedding_model = await self.runtime.ensure_embedding_model()
@@ -152,9 +156,9 @@ class IndexingService:
                 await vector_store.upsert_chunks(
                     chunks,
                     tenant=tenant_spec.to_core(),
-                    collection_name=tenant_spec.base_collection,
+                    collection_name=collection_name,
                 )
-                await self.runtime.refresh_keywords(tenant_spec.base_collection, tenant_spec.to_core())
+                await self.runtime.refresh_keywords(collection_name, tenant_spec.to_core())
                 cache_dirty = True
                 indexed_documents = next_document_count
                 indexed_chunks = next_chunk_count
@@ -191,7 +195,7 @@ class IndexingService:
                     temp_path.unlink(missing_ok=True)
 
         if indexed_documents > 0:
-            self.runtime.invalidate_retrieval_scope(tenant_spec.base_collection, tenant_spec.to_core())
+            self.runtime.invalidate_retrieval_scope(collection_name, tenant_spec.to_core())
 
         return BatchUploadResponse(
             total_files=len(files),
@@ -216,8 +220,13 @@ class IndexingService:
             tenant=tenant,
             base_collection=collection,
         ).tenant
+        resolved_collection = normalize_request_context(
+            request_context,
+            tenant=tenant,
+            base_collection=collection,
+        ).resolved_collection or collection
         return await vector_store.list_documents(
-            collection_name=collection,
+            collection_name=resolved_collection,
             limit=limit,
             offset=offset,
             filename=filename,
@@ -237,8 +246,13 @@ class IndexingService:
             tenant=tenant,
             base_collection=collection,
         ).tenant
+        resolved_collection = normalize_request_context(
+            request_context,
+            tenant=tenant,
+            base_collection=collection,
+        ).resolved_collection or collection
         return await vector_store.list_files(
-            collection_name=collection,
+            collection_name=resolved_collection,
             tenant=tenant_spec.to_core(),
         )
 
@@ -280,16 +294,19 @@ class IndexingService:
             request_context,
             tenant=tenant,
             base_collection=collection,
-        ).tenant
+        )
         deleted = await self._delete_document_identifier(
             vector_store,
             identifier=document_id,
-            collection=collection,
-            tenant=tenant_spec.to_core(),
+            collection=tenant_spec.resolved_collection or collection,
+            tenant=tenant_spec.tenant.to_core(),
         )
         if deleted:
-            await self.runtime.refresh_keywords(collection, tenant_spec.to_core())
-            self.runtime.invalidate_retrieval_scope(collection, tenant_spec.to_core())
+            await self.runtime.refresh_keywords(tenant_spec.resolved_collection or collection, tenant_spec.tenant.to_core())
+            self.runtime.invalidate_retrieval_scope(
+                tenant_spec.resolved_collection or collection,
+                tenant_spec.tenant.to_core(),
+            )
         return deleted
 
     async def delete_file(
@@ -305,15 +322,18 @@ class IndexingService:
             request_context,
             tenant=tenant,
             base_collection=collection,
-        ).tenant
+        )
         result = await vector_store.delete_file(
             filename,
-            collection_name=collection,
-            tenant=tenant_spec.to_core(),
+            collection_name=tenant_spec.resolved_collection or collection,
+            tenant=tenant_spec.tenant.to_core(),
         )
-        await self.runtime.refresh_keywords(collection, tenant_spec.to_core())
+        await self.runtime.refresh_keywords(tenant_spec.resolved_collection or collection, tenant_spec.tenant.to_core())
         if result:
-            self.runtime.invalidate_retrieval_scope(collection, tenant_spec.to_core())
+            self.runtime.invalidate_retrieval_scope(
+                tenant_spec.resolved_collection or collection,
+                tenant_spec.tenant.to_core(),
+            )
         return result
 
     async def _delete_document_identifier(

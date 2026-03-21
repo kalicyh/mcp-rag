@@ -100,6 +100,7 @@ class Settings(BaseModel):
     # Vector database settings
     vector_db_type: str = Field(default="chroma", description="向量数据库类型")  # chroma or qdrant
     chroma_persist_directory: str = Field(default="./data/chroma", description="ChromaDB 数据目录")
+    knowledge_base_db_path: str = Field(default="./data/knowledge_bases.sqlite3", description="知识库注册表 SQLite 路径")
     qdrant_url: str = Field(default="http://localhost:6333", description="Qdrant 服务器地址")
 
     # Embedding model settings

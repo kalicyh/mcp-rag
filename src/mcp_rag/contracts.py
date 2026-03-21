@@ -15,6 +15,8 @@ class DocumentRequest:
     content: str
     collection: str = "default"
     metadata: Dict[str, Any] = field(default_factory=dict)
+    kb_id: int | None = None
+    scope: str | None = None
     tenant: TenantSpec = field(default_factory=TenantSpec)
     context: RequestContext | None = None
 
@@ -24,6 +26,8 @@ class DocumentRequest:
             self.context,
             tenant=self.tenant,
             base_collection=self.collection,
+            kb_id=self.kb_id,
+            kb_scope=self.scope,
             operation="add_document",
         )
         self.collection = self.context.tenant.base_collection
@@ -39,6 +43,8 @@ class SearchRequest:
     limit: int = 5
     threshold: float = 0.7
     mode: str = "raw"
+    kb_id: int | None = None
+    scope: str | None = None
     tenant: TenantSpec = field(default_factory=TenantSpec)
     context: RequestContext | None = None
 
@@ -48,6 +54,8 @@ class SearchRequest:
             self.context,
             tenant=self.tenant,
             base_collection=self.collection,
+            kb_id=self.kb_id,
+            kb_scope=self.scope,
             operation="search",
         )
         self.collection = self.context.tenant.base_collection
@@ -61,6 +69,8 @@ class ChatRequest:
     query: str
     collection: str = "default"
     limit: int = 5
+    kb_id: int | None = None
+    scope: str | None = None
     tenant: TenantSpec = field(default_factory=TenantSpec)
     context: RequestContext | None = None
 
@@ -70,6 +80,8 @@ class ChatRequest:
             self.context,
             tenant=self.tenant,
             base_collection=self.collection,
+            kb_id=self.kb_id,
+            kb_scope=self.scope,
             operation="chat",
         )
         self.collection = self.context.tenant.base_collection
@@ -82,6 +94,8 @@ class DeleteRequest:
 
     identifier: str
     collection: str = "default"
+    kb_id: int | None = None
+    scope: str | None = None
     tenant: TenantSpec = field(default_factory=TenantSpec)
     context: RequestContext | None = None
 
@@ -91,6 +105,8 @@ class DeleteRequest:
             self.context,
             tenant=self.tenant,
             base_collection=self.collection,
+            kb_id=self.kb_id,
+            kb_scope=self.scope,
             operation="delete",
         )
         self.collection = self.context.tenant.base_collection

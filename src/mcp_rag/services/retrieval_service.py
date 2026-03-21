@@ -25,6 +25,8 @@ class RetrievalService:
             request.context,
             tenant=request.tenant,
             base_collection=request.collection,
+            kb_id=request.kb_id,
+            kb_scope=request.scope,
         )
         request.context = request_context
         request.tenant = request_context.tenant
@@ -40,6 +42,8 @@ class RetrievalService:
             request.context,
             tenant=request.tenant,
             base_collection=request.collection,
+            kb_id=request.kb_id,
+            kb_scope=request.scope,
         )
         request.context = request_context
         request.tenant = request_context.tenant
@@ -53,7 +57,7 @@ class RetrievalService:
         hybrid = await self.runtime.ensure_hybrid_service()
         hits = await hybrid.retrieve(
             request.query,
-            collection_name=request.collection,
+            collection_name=request_context.resolved_collection or request.collection,
             tenant=tenant,
             limit=request.limit,
             threshold=request.threshold,
@@ -96,6 +100,8 @@ class RetrievalService:
             request.context,
             tenant=request.tenant,
             base_collection=request.collection,
+            kb_id=request.kb_id,
+            kb_scope=request.scope,
         )
         cache_lookup = self._prepare_cache_lookup(request, request_context=request.context)
         response = await self._search(request, cache_lookup=cache_lookup)
@@ -124,7 +130,10 @@ class RetrievalService:
         if cache is None:
             return None, None, None
 
-        actual_collection = resolve_collection_name(request.collection, tenant=request_context.tenant.to_core())
+        actual_collection = request_context.resolved_collection or resolve_collection_name(
+            request.collection,
+            tenant=request_context.tenant.to_core(),
+        )
         key = self._build_cache_key(request, request_context=request_context, actual_collection=actual_collection)
         return cache, key, cache.generation_for(key)
 

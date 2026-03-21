@@ -13,6 +13,7 @@ from starlette.responses import PlainTextResponse
 
 from .config import config_manager
 from .contracts import ChatRequest, DocumentRequest, SearchRequest, normalize_tenant
+from .knowledge_bases import KnowledgeBaseAccessError
 from .shell_factory import (
     build_http_request_context,
     create_http_app,
@@ -151,6 +152,8 @@ class DocumentAdd(BaseModel):
     """Document addition model."""
     content: str
     collection: str = "default"
+    kb_id: Optional[int] = None
+    scope: Optional[str] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
     user_id: Optional[int] = None
     agent_id: Optional[int] = None
@@ -161,6 +164,8 @@ class DeleteDocumentRequest(BaseModel):
     """Delete document request model."""
     document_id: str
     collection: str = "default"
+    kb_id: Optional[int] = None
+    scope: Optional[str] = None
     user_id: Optional[int] = None
     agent_id: Optional[int] = None
     api_key: Optional[str] = None
@@ -170,9 +175,88 @@ class DeleteFileRequest(BaseModel):
     """Delete file request model."""
     filename: str
     collection: str = "default"
+    kb_id: Optional[int] = None
+    scope: Optional[str] = None
     user_id: Optional[int] = None
     agent_id: Optional[int] = None
     api_key: Optional[str] = None
+
+
+class KnowledgeBaseCreate(BaseModel):
+    """Create knowledge base request."""
+
+    name: str
+    scope: str = "public"
+    owner_user_id: Optional[int] = None
+    owner_agent_id: Optional[int] = None
+    api_key: Optional[str] = None
+
+
+class MCPDebugCall(BaseModel):
+    """Debug MCP tool invocation request."""
+
+    tool: str
+    arguments: Dict[str, Any] = Field(default_factory=dict)
+    api_key: Optional[str] = None
+
+
+def _legacy_collection_key(collection: str, *, scope: str, user_id: int | None, agent_id: int | None) -> str:
+    if scope == "public":
+        return f"legacy:public:{collection or 'default'}"
+    return f"legacy:agent_private:{user_id}:{agent_id}:{collection or 'default'}"
+
+
+def _resolve_request_knowledge_base(
+    request: Request,
+    *,
+    kb_id: int | None = None,
+    scope: str | None = None,
+    collection: str = "default",
+    user_id: int | None = None,
+    agent_id: int | None = None,
+    api_key: str | None = None,
+    operation: str = "request",
+) -> tuple:
+    shell_context = request.app.state.shell_context
+    resolved_scope = shell_context.knowledge_bases.normalize_scope(scope, user_id=user_id, agent_id=agent_id)
+    try:
+        resolution = shell_context.knowledge_bases.resolve(
+            kb_id=kb_id,
+            scope=resolved_scope,
+            user_id=user_id,
+            agent_id=agent_id,
+            legacy_collection=collection,
+            legacy_collection_key=_legacy_collection_key(
+                collection,
+                scope=resolved_scope,
+                user_id=user_id,
+                agent_id=agent_id,
+            ),
+        )
+    except KnowledgeBaseAccessError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    effective_user_id = user_id if resolution.scope == "agent_private" else None
+    effective_agent_id = agent_id if resolution.scope == "agent_private" else None
+    tenant = normalize_tenant(
+        base_collection=resolution.name,
+        user_id=effective_user_id,
+        agent_id=effective_agent_id,
+    )
+    request_context = build_http_request_context(
+        request,
+        tenant=tenant,
+        base_collection=resolution.name,
+        user_id=effective_user_id,
+        agent_id=effective_agent_id,
+        api_key=api_key,
+        kb_id=resolution.kb_id,
+        kb_scope=resolution.scope,
+        kb_name=resolution.name,
+        resolved_collection=resolution.collection_name,
+        operation=operation,
+        subject=request_subject(request, tenant, fallback=f"{operation}:{resolution.collection_name}"),
+    )
+    return resolution, request_context
 
 
 @app.get("/")
@@ -323,21 +407,15 @@ async def reload_config(request: Request):
 async def add_document(doc: DocumentAdd, request: Request):
     """Add a single document."""
     try:
-        request_context = build_http_request_context(
+        _, request_context = _resolve_request_knowledge_base(
             request,
-            base_collection=doc.collection,
+            kb_id=doc.kb_id,
+            scope=doc.scope,
+            collection=doc.collection,
             user_id=doc.user_id,
             agent_id=doc.agent_id,
             api_key=doc.api_key,
-            subject=request_subject(
-                request,
-                normalize_tenant(
-                    base_collection=doc.collection,
-                    user_id=doc.user_id,
-                    agent_id=doc.agent_id,
-                ),
-                fallback="documents",
-            ),
+            operation="add_document",
         )
         context = request.app.state.shell_context
         async with context.observability.timer("add_document"):
@@ -346,14 +424,18 @@ async def add_document(doc: DocumentAdd, request: Request):
             return await service.add_document(
                 DocumentRequest(
                     content=doc.content,
-                    collection=doc.collection,
+                    collection=request_context.kb_name or doc.collection,
                     metadata=doc.metadata,
+                    kb_id=request_context.kb_id,
+                    scope=request_context.kb_scope,
                     tenant=request_context.tenant,
                     context=request_context,
                 )
             )
     except QuotaExceededError as exc:
         raise HTTPException(status_code=413, detail=str(exc)) from exc
+    except KnowledgeBaseAccessError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
 
 
 @app.post("/upload-files")
@@ -361,6 +443,8 @@ async def upload_files(
     request: Request,
     files: List[UploadFile] = File(...),
     collection: str = Form("default"),
+    kb_id: Optional[int] = Form(None),
+    scope: Optional[str] = Form(None),
     user_id: Optional[int] = Form(None),
     agent_id: Optional[int] = Form(None),
     api_key: Optional[str] = Form(None),
@@ -369,19 +453,15 @@ async def upload_files(
     if not files:
         raise HTTPException(status_code=400, detail="No files provided")
 
-    tenant = normalize_tenant(
-        base_collection=collection,
-        user_id=user_id,
-        agent_id=agent_id,
-    )
-    request_context = build_http_request_context(
+    _, request_context = _resolve_request_knowledge_base(
         request,
-        tenant=tenant,
-        base_collection=collection,
+        kb_id=kb_id,
+        scope=scope,
+        collection=collection,
         user_id=user_id,
         agent_id=agent_id,
         api_key=api_key,
-        subject=request_subject(request, tenant, fallback=f"upload:{collection}"),
+        operation="upload_files",
     )
     context = request.app.state.shell_context
     async with context.observability.timer("upload_files"):
@@ -402,26 +482,122 @@ async def list_collections(
     api_key: Optional[str] = None,
 ):
     """List all collections."""
-    tenant = normalize_tenant(
-        base_collection="default",
-        user_id=user_id,
-        agent_id=agent_id,
-    )
     request_context = build_http_request_context(
         request,
-        tenant=tenant,
-        base_collection="default",
+        tenant=normalize_tenant(base_collection="collections", user_id=user_id, agent_id=agent_id),
+        base_collection="collections",
         user_id=user_id,
         agent_id=agent_id,
         api_key=api_key,
-        subject=request_subject(request, tenant, fallback="collections"),
+        operation="list_collections",
+        subject=request_subject(
+            request,
+            normalize_tenant(base_collection="collections", user_id=user_id, agent_id=agent_id),
+            fallback="collections",
+        ),
     )
     context = request.app.state.shell_context
     async with context.observability.timer("list_collections"):
         enforce_http_guardrails(request, request_context=request_context)
-        service = await get_rag_service(request)
-        collections = await service.list_collections(request_context=request_context)
+        collections = [item.collection_name for item in context.knowledge_bases.list_accessible(user_id=user_id, agent_id=agent_id)]
     return {"collections": collections}
+
+
+@app.get("/knowledge-bases")
+async def list_knowledge_bases(
+    request: Request,
+    user_id: Optional[int] = None,
+    agent_id: Optional[int] = None,
+    api_key: Optional[str] = None,
+):
+    """List accessible knowledge bases."""
+
+    tenant = normalize_tenant(base_collection="knowledge_bases", user_id=user_id, agent_id=agent_id)
+    request_context = build_http_request_context(
+        request,
+        tenant=tenant,
+        base_collection="knowledge_bases",
+        user_id=user_id,
+        agent_id=agent_id,
+        api_key=api_key,
+        operation="list_knowledge_bases",
+        subject=request_subject(request, tenant, fallback="knowledge_bases"),
+    )
+    context = request.app.state.shell_context
+    async with context.observability.timer("list_knowledge_bases"):
+        enforce_http_guardrails(request, request_context=request_context)
+        items = context.knowledge_bases.list_accessible(user_id=user_id, agent_id=agent_id)
+    return {"knowledge_bases": [item.to_dict() for item in items]}
+
+
+@app.post("/knowledge-bases")
+async def create_knowledge_base(payload: KnowledgeBaseCreate, request: Request):
+    """Create a public or agent-private knowledge base."""
+
+    tenant = normalize_tenant(
+        base_collection="knowledge_bases",
+        user_id=payload.owner_user_id,
+        agent_id=payload.owner_agent_id,
+    )
+    request_context = build_http_request_context(
+        request,
+        tenant=tenant,
+        base_collection="knowledge_bases",
+        user_id=payload.owner_user_id,
+        agent_id=payload.owner_agent_id,
+        api_key=payload.api_key,
+        operation="create_knowledge_base",
+        subject=request_subject(request, tenant, fallback="knowledge_bases:create"),
+    )
+    context = request.app.state.shell_context
+    async with context.observability.timer("create_knowledge_base"):
+        enforce_http_guardrails(request, request_context=request_context)
+        knowledge_base = context.knowledge_bases.create_knowledge_base(
+            name=payload.name,
+            scope=payload.scope,
+            owner_user_id=payload.owner_user_id,
+            owner_agent_id=payload.owner_agent_id,
+        )
+    return knowledge_base.to_dict()
+
+
+@app.get("/debug/mcp/tools")
+async def debug_mcp_tools(request: Request, api_key: Optional[str] = None):
+    """List MCP tools for the debug UI."""
+
+    tenant = normalize_tenant(base_collection="mcp_debug")
+    request_context = build_http_request_context(
+        request,
+        tenant=tenant,
+        base_collection="mcp_debug",
+        api_key=api_key,
+        operation="debug_mcp_tools",
+        subject="mcp_debug",
+    )
+    context = request.app.state.shell_context
+    async with context.observability.timer("debug_mcp_tools"):
+        enforce_http_guardrails(request, request_context=request_context)
+        return {"tools": mcp_server.debug_tools()}
+
+
+@app.post("/debug/mcp/call")
+async def debug_mcp_call(payload: MCPDebugCall, request: Request):
+    """Call one MCP tool through an HTTP debug facade."""
+
+    tenant = normalize_tenant(base_collection="mcp_debug")
+    request_context = build_http_request_context(
+        request,
+        tenant=tenant,
+        base_collection="mcp_debug",
+        api_key=payload.api_key,
+        operation="debug_mcp_call",
+        subject="mcp_debug",
+    )
+    context = request.app.state.shell_context
+    async with context.observability.timer("debug_mcp_call"):
+        enforce_http_guardrails(request, request_context=request_context)
+        result = await mcp_server.debug_call_tool(payload.tool, payload.arguments)
+    return result
 
 
 @app.post("/chat")
@@ -429,21 +605,18 @@ async def chat_with_knowledge_base(chat_request: dict, request: Request):
     """Chat with knowledge base using LLM."""
     query = chat_request.get("query", "")
     collection = chat_request.get("collection", "default")
+    kb_id = chat_request.get("kb_id")
+    scope = chat_request.get("scope")
     limit = int(chat_request.get("limit", 5) or 5)
-    tenant = normalize_tenant(
-        chat_request.get("tenant"),
-        base_collection=collection,
-        user_id=chat_request.get("user_id"),
-        agent_id=chat_request.get("agent_id"),
-    )
-    request_context = build_http_request_context(
+    _, request_context = _resolve_request_knowledge_base(
         request,
-        tenant=tenant,
-        base_collection=collection,
+        kb_id=kb_id,
+        scope=scope,
+        collection=collection,
         user_id=chat_request.get("user_id"),
         agent_id=chat_request.get("agent_id"),
         api_key=chat_request.get("api_key"),
-        subject=request_subject(request, tenant, fallback=f"chat:{collection}"),
+        operation="chat",
     )
 
     if not query:
@@ -456,8 +629,10 @@ async def chat_with_knowledge_base(chat_request: dict, request: Request):
         response = await service.chat(
             ChatRequest(
                 query=query,
-                collection=collection,
+                collection=request_context.kb_name or collection,
                 limit=limit,
+                kb_id=request_context.kb_id,
+                scope=request_context.kb_scope,
                 tenant=request_context.tenant,
                 context=request_context,
             )
@@ -469,6 +644,8 @@ async def search_documents(
     request: Request,
     query: str,
     collection: str = "default",
+    kb_id: Optional[int] = None,
+    scope: Optional[str] = None,
     limit: int = 5,
     user_id: Optional[int] = None,
     agent_id: Optional[int] = None,
@@ -476,19 +653,15 @@ async def search_documents(
 ):
     """Search documents."""
     logger.info("Searching for '%s' in collection '%s'", query, collection)
-    tenant = normalize_tenant(
-        base_collection=collection,
-        user_id=user_id,
-        agent_id=agent_id,
-    )
-    request_context = build_http_request_context(
+    _, request_context = _resolve_request_knowledge_base(
         request,
-        tenant=tenant,
-        base_collection=collection,
+        kb_id=kb_id,
+        scope=scope,
+        collection=collection,
         user_id=user_id,
         agent_id=agent_id,
         api_key=api_key,
-        subject=request_subject(request, tenant, fallback=f"search:{collection}"),
+        operation="search",
     )
     context = request.app.state.shell_context
     async with context.observability.timer("search"):
@@ -497,8 +670,10 @@ async def search_documents(
         response = await service.search(
             SearchRequest(
                 query=query,
-                collection=collection,
+                collection=request_context.kb_name or collection,
                 limit=limit,
+                kb_id=request_context.kb_id,
+                scope=request_context.kb_scope,
                 tenant=request_context.tenant,
                 context=request_context,
             )
@@ -509,6 +684,8 @@ async def search_documents(
 async def list_documents(
     request: Request,
     collection: str = "default",
+    kb_id: Optional[int] = None,
+    scope: Optional[str] = None,
     limit: int = 100,
     offset: int = 0,
     filename: str = None,
@@ -517,26 +694,22 @@ async def list_documents(
     api_key: Optional[str] = None,
 ):
     """List documents in a collection."""
-    tenant = normalize_tenant(
-        base_collection=collection,
-        user_id=user_id,
-        agent_id=agent_id,
-    )
-    request_context = build_http_request_context(
+    _, request_context = _resolve_request_knowledge_base(
         request,
-        tenant=tenant,
-        base_collection=collection,
+        kb_id=kb_id,
+        scope=scope,
+        collection=collection,
         user_id=user_id,
         agent_id=agent_id,
         api_key=api_key,
-        subject=request_subject(request, tenant, fallback=f"list_documents:{collection}"),
+        operation="list_documents",
     )
     context = request.app.state.shell_context
     async with context.observability.timer("list_documents"):
         enforce_http_guardrails(request, request_context=request_context)
         service = await get_rag_service(request)
         result = await service.list_documents(
-            collection=collection,
+            collection=request_context.kb_name or collection,
             limit=limit,
             offset=offset,
             filename=filename,
@@ -549,19 +722,15 @@ async def list_documents(
 async def delete_document(document_request: DeleteDocumentRequest, request: Request):
     """Delete a document."""
     try:
-        tenant = normalize_tenant(
-            base_collection=document_request.collection,
-            user_id=document_request.user_id,
-            agent_id=document_request.agent_id,
-        )
-        request_context = build_http_request_context(
+        _, request_context = _resolve_request_knowledge_base(
             request,
-            tenant=tenant,
-            base_collection=document_request.collection,
+            kb_id=document_request.kb_id,
+            scope=document_request.scope,
+            collection=document_request.collection,
             user_id=document_request.user_id,
             agent_id=document_request.agent_id,
             api_key=document_request.api_key,
-            subject=request_subject(request, tenant, fallback=f"delete_document:{document_request.collection}"),
+            operation="delete_document",
         )
         context = request.app.state.shell_context
         async with context.observability.timer("delete_document"):
@@ -569,7 +738,7 @@ async def delete_document(document_request: DeleteDocumentRequest, request: Requ
             service = await get_rag_service(request)
             success = await service.delete_document(
                 document_id=document_request.document_id,
-                collection=document_request.collection,
+                collection=request_context.kb_name or document_request.collection,
                 request_context=request_context,
             )
         if success:
@@ -587,32 +756,30 @@ async def delete_document(document_request: DeleteDocumentRequest, request: Requ
 async def list_files(
     request: Request,
     collection: str = "default",
+    kb_id: Optional[int] = None,
+    scope: Optional[str] = None,
     user_id: Optional[int] = None,
     agent_id: Optional[int] = None,
     api_key: Optional[str] = None,
 ):
     """List files in a collection."""
     try:
-        tenant = normalize_tenant(
-            base_collection=collection,
-            user_id=user_id,
-            agent_id=agent_id,
-        )
-        request_context = build_http_request_context(
+        _, request_context = _resolve_request_knowledge_base(
             request,
-            tenant=tenant,
-            base_collection=collection,
+            kb_id=kb_id,
+            scope=scope,
+            collection=collection,
             user_id=user_id,
             agent_id=agent_id,
             api_key=api_key,
-            subject=request_subject(request, tenant, fallback=f"list_files:{collection}"),
+            operation="list_files",
         )
         context = request.app.state.shell_context
         async with context.observability.timer("list_files"):
             enforce_http_guardrails(request, request_context=request_context)
             service = await get_rag_service(request)
             result = await service.list_files(
-                collection=collection,
+                collection=request_context.kb_name or collection,
                 request_context=request_context,
             )
         return {"files": result}
@@ -627,19 +794,15 @@ async def list_files(
 async def delete_file(file_request: DeleteFileRequest, request: Request):
     """Delete a file."""
     try:
-        tenant = normalize_tenant(
-            base_collection=file_request.collection,
-            user_id=file_request.user_id,
-            agent_id=file_request.agent_id,
-        )
-        request_context = build_http_request_context(
+        _, request_context = _resolve_request_knowledge_base(
             request,
-            tenant=tenant,
-            base_collection=file_request.collection,
+            kb_id=file_request.kb_id,
+            scope=file_request.scope,
+            collection=file_request.collection,
             user_id=file_request.user_id,
             agent_id=file_request.agent_id,
             api_key=file_request.api_key,
-            subject=request_subject(request, tenant, fallback=f"delete_file:{file_request.collection}"),
+            operation="delete_file",
         )
         context = request.app.state.shell_context
         async with context.observability.timer("delete_file"):
@@ -647,7 +810,7 @@ async def delete_file(file_request: DeleteFileRequest, request: Request):
             service = await get_rag_service(request)
             success = await service.delete_file(
                 filename=file_request.filename,
-                collection=file_request.collection,
+                collection=request_context.kb_name or file_request.collection,
                 request_context=request_context,
             )
         if success:

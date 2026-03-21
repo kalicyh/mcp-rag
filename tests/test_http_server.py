@@ -111,7 +111,12 @@ class HttpServerFacadeTests(unittest.TestCase):
 
             collections = self.client.get("/collections", params={"user_id": 7, "agent_id": 2})
             self.assertEqual(collections.status_code, 200)
-            self.assertEqual(collections.json()["collections"], ["default", "u7_docs"])
+            self.assertTrue(collections.json()["collections"])
+            self.assertTrue(all(name.startswith("kb_") for name in collections.json()["collections"]))
+
+            knowledge_bases = self.client.get("/knowledge-bases", params={"user_id": 7, "agent_id": 2})
+            self.assertEqual(knowledge_bases.status_code, 200)
+            self.assertTrue(knowledge_bases.json()["knowledge_bases"])
 
             upload = self.client.post(
                 "/upload-files",
@@ -124,7 +129,6 @@ class HttpServerFacadeTests(unittest.TestCase):
             self.assertTrue(service.search.await_count)
             self.assertTrue(service.chat.await_count)
             self.assertTrue(service.upload_files.await_count)
-            self.assertTrue(service.list_collections.await_count)
         finally:
             app.state.shell_context.service_provider = original_provider
 
@@ -177,6 +181,22 @@ class HttpServerFacadeTests(unittest.TestCase):
             self.assertTrue(service.delete_file.await_count)
         finally:
             app.state.shell_context.service_provider = original_provider
+
+    def test_mcp_debug_routes_expose_tools_and_calls(self):
+        tools = self.client.get("/debug/mcp/tools")
+        self.assertEqual(tools.status_code, 200)
+        payload = tools.json()["tools"]
+        self.assertTrue(payload)
+        self.assertEqual(payload[0]["name"], "rag_ask")
+
+        with patch.object(http_server_module.mcp_server, "debug_call_tool", AsyncMock(return_value={"tool": "rag_ask", "contents": [{"type": "text", "text": "ok"}]})):
+            result = self.client.post(
+                "/debug/mcp/call",
+                json={"tool": "rag_ask", "arguments": {"query": "fastapi", "scope": "public"}},
+            )
+            self.assertEqual(result.status_code, 200)
+            self.assertEqual(result.json()["tool"], "rag_ask")
+            self.assertTrue(result.json()["contents"])
 
     def test_health_metrics_and_guardrails_use_shell_context(self):
         service = self._fake_service()

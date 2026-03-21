@@ -12,6 +12,7 @@ from fastapi import FastAPI, HTTPException, Request
 
 from .config import ConfigManager, config_manager
 from .context import RequestContext, TenantSpec, normalize_tenant
+from .knowledge_bases import KnowledgeBaseService
 from .observability import ObservabilityCollector
 from .security import (
     AuthenticationError,
@@ -35,6 +36,7 @@ class AppContext:
     security_policy: SecurityPolicy
     rate_limiter: TokenBucketRateLimiter
     observability: ObservabilityCollector
+    knowledge_bases: KnowledgeBaseService
     config_manager: ConfigManager | None = None
     service_provider: ServiceProvider | None = None
     service: Any | None = None
@@ -78,6 +80,7 @@ def create_app_context(
         security_policy=security_policy or SecurityPolicy.from_settings(resolved_settings),
         rate_limiter=rate_limiter or TokenBucketRateLimiter.from_settings(resolved_settings),
         observability=resolved_observability,
+        knowledge_bases=KnowledgeBaseService(getattr(resolved_settings, "knowledge_base_db_path", "./data/knowledge_bases.sqlite3")),
         config_manager=manager,
         config_revision=manager.revision if manager is not None else 0,
     )
@@ -129,6 +132,9 @@ async def sync_app_context(context: AppContext, *, force: bool = False) -> bool:
         context.settings = settings_obj
         context.security_policy = SecurityPolicy.from_settings(settings_obj)
         context.rate_limiter = TokenBucketRateLimiter.from_settings(settings_obj)
+        context.knowledge_bases = KnowledgeBaseService(
+            getattr(settings_obj, "knowledge_base_db_path", "./data/knowledge_bases.sqlite3")
+        )
 
         configure = getattr(context.observability, "configure_from_settings", None)
         if callable(configure):
@@ -160,6 +166,9 @@ async def reload_app_context(context: AppContext, *, settings_obj: Any | None = 
         context.settings = settings_obj
         context.security_policy = SecurityPolicy.from_settings(settings_obj)
         context.rate_limiter = TokenBucketRateLimiter.from_settings(settings_obj)
+        context.knowledge_bases = KnowledgeBaseService(
+            getattr(settings_obj, "knowledge_base_db_path", "./data/knowledge_bases.sqlite3")
+        )
 
         configure = getattr(context.observability, "configure_from_settings", None)
         if callable(configure):
@@ -342,9 +351,13 @@ def build_http_request_context(
     base_collection: str = "default",
     user_id: int | None = None,
     agent_id: int | None = None,
-    api_key: str | None = None,
-    operation: str = "request",
-    subject: str | None = None,
+        api_key: str | None = None,
+        kb_id: int | None = None,
+        kb_scope: str | None = None,
+        kb_name: str | None = None,
+        resolved_collection: str | None = None,
+        operation: str = "request",
+        subject: str | None = None,
 ) -> RequestContext:
     """Build and attach the canonical request context for an HTTP request."""
 
@@ -355,6 +368,10 @@ def build_http_request_context(
         user_id=user_id,
         agent_id=agent_id,
         api_key=request_api_key(request, api_key),
+        kb_id=kb_id,
+        kb_scope=kb_scope,
+        kb_name=kb_name,
+        resolved_collection=resolved_collection,
         operation=operation,
         subject=subject,
     )
@@ -372,6 +389,10 @@ def build_mcp_request_context(
     user_id: int | None = None,
     agent_id: int | None = None,
     api_key: str | None = None,
+    kb_id: int | None = None,
+    kb_scope: str | None = None,
+    kb_name: str | None = None,
+    resolved_collection: str | None = None,
     operation: str = "mcp",
     subject: str | None = None,
 ) -> RequestContext:
@@ -384,6 +405,10 @@ def build_mcp_request_context(
         user_id=user_id,
         agent_id=agent_id,
         api_key=api_key,
+        kb_id=kb_id,
+        kb_scope=kb_scope,
+        kb_name=kb_name,
+        resolved_collection=resolved_collection,
         operation=operation,
         subject=subject,
     )

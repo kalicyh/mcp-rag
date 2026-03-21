@@ -24,6 +24,8 @@ class ChatService:
             request.context,
             tenant=request.tenant,
             base_collection=request.collection,
+            kb_id=request.kb_id,
+            kb_scope=request.scope,
         )
         search_response = await self.retrieval_service.search(
             SearchRequest(
@@ -31,6 +33,8 @@ class ChatService:
                 collection=request.collection,
                 limit=request.limit,
                 threshold=0.7,
+                kb_id=request.kb_id,
+                scope=request.scope,
                 tenant=request_context.tenant,
                 context=request_context,
             )

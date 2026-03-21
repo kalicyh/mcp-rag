@@ -4,13 +4,14 @@
   import PageShell from './lib/components/PageShell.svelte';
   import PageTabs from './lib/components/PageTabs.svelte';
   import PanelCard from './lib/components/PanelCard.svelte';
+  import SelectField from './lib/components/SelectField.svelte';
 
   const STORAGE_KEY = 'mcp-rag-dashboard-state';
   const sections = [
     { id: 'overview', title: '总览', subtitle: '状态和指标' },
     { id: 'documents', title: '文档管理', subtitle: '上传、检索、删除' },
+    { id: 'mcp', title: 'MCP 调试', subtitle: '工具与调用' },
     { id: 'config', title: '配置中心', subtitle: '配置和策略' },
-    { id: 'status', title: '服务状态', subtitle: '健康、就绪、指标' },
   ];
   const documentModes = [
     { id: 'ingest', title: '导入' },
@@ -20,9 +21,10 @@
   const routeSectionMap = {
     overview: 'overview',
     documents: 'documents',
+    mcp: 'mcp',
     config: 'config',
-    status: 'status',
-    insights: 'status',
+    status: 'overview',
+    insights: 'overview',
   };
 
   function emptyDraft() {
@@ -113,6 +115,14 @@
     }
   }
 
+  function prettyJson(value) {
+    try {
+      return JSON.stringify(value, null, 2);
+    } catch {
+      return String(value ?? '');
+    }
+  }
+
   function splitKeys(text) {
     return text
       .split('\n')
@@ -167,12 +177,12 @@
   let managedPageSize = 8;
   let queuedFiles = [];
   let identity = emptyContext();
-  let collections = ['default'];
-  let selectedCollection = 'default';
-  let documentCollection = 'default';
-  let searchCollection = 'default';
-  let chatCollection = 'default';
-  let manageCollection = 'default';
+  let knowledgeBases = [];
+  let selectedKnowledgeBase = '';
+  let documentKnowledgeBase = '';
+  let searchKnowledgeBase = '';
+  let chatKnowledgeBase = '';
+  let manageKnowledgeBase = '';
   let fileFilter = '';
   let uploadBusy = false;
   let addBusy = false;
@@ -180,13 +190,17 @@
   let chatBusy = false;
   let manageBusy = false;
   let configBusy = false;
-  let statusBusy = false;
   let overviewBusy = false;
+  let mcpBusy = false;
   let health = null;
   let ready = null;
   let metrics = null;
   let config = null;
   let configDraft = emptyDraft();
+  let mcpTools = [];
+  let mcpTool = '';
+  let mcpArguments = JSON.stringify({ query: 'FastAPI 是什么？', scope: 'public' }, null, 2);
+  let mcpResult = '';
   let documents = [];
   let files = [];
   let documentsTotal = 0;
@@ -201,7 +215,7 @@
   let chatMessages = [
     {
       role: 'assistant',
-      content: '先选集合，再上传文档、修改配置或查看状态。',
+      content: '先选知识库，再上传文档、修改配置或查看状态。',
     },
   ];
   let toasts = [];
@@ -216,19 +230,57 @@
     }, 4200);
   }
 
+  function knowledgeBaseById(value) {
+    const numeric = Number(value || 0);
+    return knowledgeBases.find((item) => Number(item.id) === numeric) || null;
+  }
+
+  function currentMcpTool() {
+    return mcpTools.find((item) => item.name === mcpTool) || null;
+  }
+
+  function ensureMcpToolSelected() {
+    if (!mcpTool && mcpTools[0]?.name) {
+      mcpTool = mcpTools[0].name;
+    }
+  }
+
+  function knowledgeBaseLabel(item) {
+    if (!item) return '未选择知识库';
+    if (item.scope === 'public') return `公共 · ${item.name}`;
+    return `Agent ${item.owner_agent_id ?? '-'} · ${item.name}`;
+  }
+
+  function knowledgeBaseOptions() {
+    return knowledgeBases.map((item) => ({
+      value: String(item.id),
+      label: knowledgeBaseLabel(item),
+    }));
+  }
+
+  function knowledgeBaseRequest(selection) {
+    const knowledgeBase = knowledgeBaseById(selection);
+    return {
+      kbId: knowledgeBase?.id ? Number(knowledgeBase.id) : undefined,
+      scope: knowledgeBase?.scope,
+      collection: knowledgeBase?.name || 'default',
+    };
+  }
+
   function readState() {
     if (typeof window === 'undefined') return;
     try {
       const raw = window.localStorage.getItem(STORAGE_KEY);
       if (!raw) return;
       const parsed = JSON.parse(raw);
-      if (parsed.activeSection) activeSection = parsed.activeSection;
+      if (parsed.activeSection) activeSection = routeSectionMap[parsed.activeSection] || parsed.activeSection;
       if (parsed.documentMode) documentMode = parsed.documentMode;
       if (parsed.identity) identity = normalizeIdentity(parsed.identity);
-      if (parsed.selectedCollection) selectedCollection = parsed.selectedCollection;
-      if (parsed.searchCollection) searchCollection = parsed.searchCollection;
-      if (parsed.chatCollection) chatCollection = parsed.chatCollection;
-      if (parsed.manageCollection) manageCollection = parsed.manageCollection;
+      if (parsed.selectedKnowledgeBase) selectedKnowledgeBase = parsed.selectedKnowledgeBase;
+      if (parsed.searchKnowledgeBase) searchKnowledgeBase = parsed.searchKnowledgeBase;
+      if (parsed.chatKnowledgeBase) chatKnowledgeBase = parsed.chatKnowledgeBase;
+      if (parsed.manageKnowledgeBase) manageKnowledgeBase = parsed.manageKnowledgeBase;
+      if (parsed.documentKnowledgeBase) documentKnowledgeBase = parsed.documentKnowledgeBase;
     } catch {
       // Ignore malformed local state.
     }
@@ -244,10 +296,11 @@
       activeSection,
       documentMode,
       identity,
-      selectedCollection,
-      searchCollection,
-      chatCollection,
-      manageCollection,
+      selectedKnowledgeBase,
+      documentKnowledgeBase,
+      searchKnowledgeBase,
+      chatKnowledgeBase,
+      manageKnowledgeBase,
     };
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
   }
@@ -292,12 +345,12 @@
     writeState();
   }
 
-  function setCollection(value) {
-    selectedCollection = value;
-    documentCollection = value;
-    searchCollection = value;
-    chatCollection = value;
-    manageCollection = value;
+  function setKnowledgeBase(value) {
+    selectedKnowledgeBase = value;
+    documentKnowledgeBase = value;
+    searchKnowledgeBase = value;
+    chatKnowledgeBase = value;
+    manageKnowledgeBase = value;
     writeState();
   }
 
@@ -358,30 +411,28 @@
 
   function buildRequestContext() {
     return {
-      collection: selectedCollection,
       userId: identity.userId,
       agentId: identity.agentId,
       apiKey: identity.apiKey,
     };
   }
 
-  async function refreshCollections({ silent = false } = {}) {
+  async function refreshKnowledgeBases({ silent = false } = {}) {
     try {
-      const response = await api.collections(buildRequestContext());
-      const nextCollections = Array.isArray(response?.collections) && response.collections.length > 0
-        ? response.collections
-        : ['default'];
-      collections = Array.from(new Set(['default', ...nextCollections]));
-      if (!collections.includes(selectedCollection)) {
-        setCollection(collections[0]);
+      const response = await api.knowledgeBases(buildRequestContext());
+      const nextKnowledgeBases = Array.isArray(response?.knowledge_bases) ? response.knowledge_bases : [];
+      knowledgeBases = nextKnowledgeBases;
+      const defaultId = knowledgeBases[0] ? String(knowledgeBases[0].id) : '';
+      if (!knowledgeBaseById(selectedKnowledgeBase)) {
+        setKnowledgeBase(defaultId);
       }
-      if (!collections.includes(documentCollection)) documentCollection = collections[0];
-      if (!collections.includes(searchCollection)) searchCollection = collections[0];
-      if (!collections.includes(chatCollection)) chatCollection = collections[0];
-      if (!collections.includes(manageCollection)) manageCollection = collections[0];
-      if (!silent) pushToast('集合已刷新', `当前可用集合 ${collections.length} 个`, 'success');
+      if (!knowledgeBaseById(documentKnowledgeBase)) documentKnowledgeBase = defaultId;
+      if (!knowledgeBaseById(searchKnowledgeBase)) searchKnowledgeBase = defaultId;
+      if (!knowledgeBaseById(chatKnowledgeBase)) chatKnowledgeBase = defaultId;
+      if (!knowledgeBaseById(manageKnowledgeBase)) manageKnowledgeBase = defaultId;
+      if (!silent) pushToast('知识库已刷新', `当前可用知识库 ${knowledgeBases.length} 个`, 'success');
     } catch (error) {
-      if (!silent) pushToast('集合加载失败', error.message, 'warning');
+      if (!silent) pushToast('知识库加载失败', error.message, 'warning');
     }
   }
 
@@ -393,7 +444,7 @@
         api.ready(identity),
         api.metrics(identity),
         api.config(identity),
-        api.collections(buildRequestContext()),
+        api.knowledgeBases(buildRequestContext()),
       ]);
 
       if (healthResult.status === 'fulfilled') health = healthResult.value;
@@ -404,29 +455,11 @@
         syncConfigDraft(configResult.value);
       }
       if (collectionsResult.status === 'fulfilled') {
-        const nextCollections = collectionsResult.value?.collections ?? [];
-        collections = Array.from(new Set(['default', ...nextCollections]));
+        knowledgeBases = collectionsResult.value?.knowledge_bases ?? [];
       }
       lastRefreshAt = new Date();
     } finally {
       overviewBusy = false;
-    }
-  }
-
-  async function refreshStatus() {
-    statusBusy = true;
-    try {
-      const [healthResult, readyResult, metricsResult] = await Promise.allSettled([
-        api.health(identity),
-        api.ready(identity),
-        api.metrics(identity),
-      ]);
-      if (healthResult.status === 'fulfilled') health = healthResult.value;
-      if (readyResult.status === 'fulfilled') ready = readyResult.value;
-      if (metricsResult.status === 'fulfilled') metrics = metricsResult.value?.metrics ?? metricsResult.value;
-      lastRefreshAt = new Date();
-    } finally {
-      statusBusy = false;
     }
   }
 
@@ -443,19 +476,65 @@
     }
   }
 
+  async function refreshMcpTools({ silent = false } = {}) {
+    try {
+      const response = await api.mcpTools(identity);
+      mcpTools = Array.isArray(response?.tools) ? response.tools : [];
+      ensureMcpToolSelected();
+      if (!silent) pushToast('MCP 工具已刷新', `当前可用工具 ${mcpTools.length} 个`, 'success');
+    } catch (error) {
+      if (!silent) pushToast('MCP 工具加载失败', error.message, 'warning');
+    }
+  }
+
+  async function runMcpTool() {
+    const selected = currentMcpTool();
+    if (!selected) {
+      pushToast('没有可用工具', '请先刷新 MCP 工具列表。', 'warning');
+      return;
+    }
+
+    let argumentsPayload = null;
+    try {
+      argumentsPayload = parseJsonOr(null, mcpArguments);
+      if (!argumentsPayload || typeof argumentsPayload !== 'object' || Array.isArray(argumentsPayload)) {
+        throw new Error('参数必须是 JSON 对象');
+      }
+    } catch (error) {
+      pushToast('参数格式错误', error.message || '请输入合法 JSON。', 'error');
+      return;
+    }
+
+    mcpBusy = true;
+    try {
+      const result = await api.mcpCall({
+        tool: selected.name,
+        arguments: argumentsPayload,
+        api_key: identity.apiKey || null,
+      });
+      mcpResult = prettyJson(result);
+      pushToast('MCP 调用完成', selected.name, 'success');
+    } catch (error) {
+      mcpResult = prettyJson(error.payload || { message: error.message });
+      pushToast('MCP 调用失败', error.message, 'error');
+    } finally {
+      mcpBusy = false;
+    }
+  }
+
   async function refreshDocuments() {
     manageBusy = true;
     try {
       const [documentsResult, filesResult] = await Promise.allSettled([
         api.listDocuments({
-          collection: manageCollection,
+          ...knowledgeBaseRequest(manageKnowledgeBase),
           limit: managedPageSize,
           offset: managedPage * managedPageSize,
           filename: fileFilter || undefined,
           ...identity,
         }),
         api.listFiles({
-          collection: manageCollection,
+          ...knowledgeBaseRequest(manageKnowledgeBase),
           ...identity,
         }),
       ]);
@@ -480,7 +559,7 @@
     if (documentMode === 'manage') {
       await refreshDocuments();
     } else {
-      await refreshCollections({ silent: true });
+      await refreshKnowledgeBases({ silent: true });
     }
   }
 
@@ -488,7 +567,7 @@
     loading = true;
     try {
       await Promise.all([
-        refreshCollections({ silent: true }),
+        refreshKnowledgeBases({ silent: true }),
         refreshOverview(),
       ]);
       if (activeSection !== 'overview') {
@@ -508,12 +587,12 @@
     try {
       await api.uploadFiles({
         files: queuedFiles,
-        collection: documentCollection,
+        ...knowledgeBaseRequest(documentKnowledgeBase),
         ...identity,
       });
       queuedFiles = [];
       pushToast('上传完成', '文件已提交到后台处理。', 'success');
-      await refreshCollections({ silent: true });
+      await refreshKnowledgeBases({ silent: true });
       if (documentMode === 'manage') await refreshDocuments();
     } catch (error) {
       pushToast('上传失败', error.message, 'error');
@@ -564,7 +643,7 @@
     try {
       await api.addDocument({
         content: documentContent.trim(),
-        collection: documentCollection,
+        ...knowledgeBaseRequest(documentKnowledgeBase),
         metadata: {
           title: documentTitle.trim() || undefined,
           source: 'manual_input',
@@ -577,7 +656,7 @@
       documentContent = '';
       documentTitle = '';
       pushToast('文档已添加', '手工录入内容已保存。', 'success');
-      await refreshCollections({ silent: true });
+      await refreshKnowledgeBases({ silent: true });
       if (documentMode === 'manage') await refreshDocuments();
     } catch (error) {
       pushToast('添加失败', error.message, 'error');
@@ -595,7 +674,7 @@
     try {
       const result = await api.search({
         query: searchQuery.trim(),
-        collection: searchCollection,
+        ...knowledgeBaseRequest(searchKnowledgeBase),
         limit: Number(searchLimit || 5),
         ...identity,
       });
@@ -627,7 +706,7 @@
     try {
       const result = await api.chat({
         query: question,
-        collection: chatCollection,
+        ...knowledgeBaseRequest(chatKnowledgeBase),
         user_id: identity.userId ? Number(identity.userId) : null,
         agent_id: identity.agentId ? Number(identity.agentId) : null,
         api_key: identity.apiKey || null,
@@ -670,7 +749,7 @@
     try {
       await api.deleteDocument({
         document_id: documentId,
-        collection: manageCollection,
+        ...knowledgeBaseRequest(manageKnowledgeBase),
         user_id: identity.userId ? Number(identity.userId) : null,
         agent_id: identity.agentId ? Number(identity.agentId) : null,
         api_key: identity.apiKey || null,
@@ -687,7 +766,7 @@
     try {
       await api.deleteFile({
         filename,
-        collection: manageCollection,
+        ...knowledgeBaseRequest(manageKnowledgeBase),
         user_id: identity.userId ? Number(identity.userId) : null,
         agent_id: identity.agentId ? Number(identity.agentId) : null,
         api_key: identity.apiKey || null,
@@ -807,7 +886,7 @@
   }
 
   function collectionSummary() {
-    return `${collections.length} 个集合`;
+    return `${knowledgeBases.length} 个知识库`;
   }
 
   function readyStatus() {
@@ -828,8 +907,8 @@
   function refreshActiveView() {
     if (activeSection === 'overview') return refreshOverview();
     if (activeSection === 'documents') return refreshDocumentsSection();
-    if (activeSection === 'config') return refreshConfig();
-    return refreshStatus();
+    if (activeSection === 'mcp') return refreshMcpTools({ silent: true });
+    return refreshConfig();
   }
 
   function operationRows() {
@@ -939,12 +1018,13 @@
     <div class="sidebar-section">
       <div class="sidebar-label">请求上下文</div>
       <div class="field">
-        <div class="field-label">Collection</div>
-        <select bind:value={selectedCollection} on:change={() => setCollection(selectedCollection)}>
-          {#each collections as collection}
-            <option value={collection}>{collection}</option>
-          {/each}
-        </select>
+        <div class="field-label">Knowledge Base</div>
+        <SelectField
+          bind:value={selectedKnowledgeBase}
+          options={knowledgeBaseOptions()}
+          ariaLabel="选择知识库"
+          on:change={() => setKnowledgeBase(selectedKnowledgeBase)}
+        />
       </div>
       <div class="field">
         <div class="field-label">User ID</div>
@@ -958,15 +1038,18 @@
         <div class="field-label">API Key</div>
         <input bind:value={identity.apiKey} placeholder="可选" />
       </div>
-      <div class="field-help">这些值会附带到请求里，用来区分租户。</div>
+      <div class="field-help">这些值会附带到请求里，用来列出并访问公共库或当前用户的 agent 私有知识库。</div>
     </div>
   </aside>
 
   <main class="content">
     {#if activeSection === 'overview'}
       <PageShell title="总览" subtitle="状态、请求、集合、版本。">
-        <svelte:fragment slot="meta">
-          <div class="toolbar-group">
+        <svelte:fragment slot="actions">
+          <div class="card-actions">
+            <button class="button secondary" on:click={refreshOverview} disabled={overviewBusy}>
+              {overviewBusy ? '刷新中...' : '刷新总览'}
+            </button>
             <span class="pill info"><strong>{collectionSummary()}</strong><span>集合</span></span>
             <span class="pill good"><strong>{healthStatus() ? '正常' : '降级'}</strong><span>健康</span></span>
             <span class="pill {readyStatus() ? 'good' : 'bad'}"><strong>{readyStatus() ? '就绪' : '未就绪'}</strong><span>状态</span></span>
@@ -990,9 +1073,9 @@
           </div>
           <div class="card">
             <div class="metric">
-              <div class="metric-label">可用集合</div>
-              <div class="metric-value">{collections.length}</div>
-              <div class="metric-meta">选中: {selectedCollection}</div>
+              <div class="metric-label">可用知识库</div>
+              <div class="metric-value">{knowledgeBases.length}</div>
+              <div class="metric-meta">选中: {knowledgeBaseLabel(knowledgeBaseById(selectedKnowledgeBase))}</div>
             </div>
           </div>
           <div class="card">
@@ -1003,19 +1086,104 @@
             </div>
           </div>
         </div>
+
+        <div class="grid-3">
+          <div class="card">
+            <div class="metric">
+              <div class="metric-label">健康</div>
+              <div class="metric-value">{safeText(health?.status, healthStatus() ? '正常' : '未知')}</div>
+              <div class="metric-meta">{health?.reasons?.length ? health.reasons.join(' · ') : '无异常原因'}</div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="metric">
+              <div class="metric-label">就绪</div>
+              <div class="metric-value">{ready?.ready ? '是' : '否'}</div>
+              <div class="metric-meta">{ready?.ready ? '依赖满足' : '依赖检查未通过'}</div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="metric">
+              <div class="metric-label">错误率</div>
+              <div class="metric-value">{pct((metrics?.error_count ?? 0) / Math.max(metrics?.total_requests ?? 1, 1))}</div>
+              <div class="metric-meta">总请求 {metrics?.total_requests ?? 0}</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <PanelCard title="运行时详情" subtitle="依赖状态。">
+            <div class="status-stack">
+              {#each runtimeRows() as row}
+                <div class="status-row">
+                  <div>
+                    <strong>{row.label}</strong>
+                    <div class="muted">
+                      {safeText(row.data?.provider || row.data?.name || row.data?.reason || row.data?.status, '未知')}
+                    </div>
+                  </div>
+                  <span class="status-badge {statusTone(row.data?.status || row.data?.state || 'info')}">
+                    {safeText(row.data?.status || row.data?.state, '未知')}
+                  </span>
+                </div>
+              {/each}
+            </div>
+          </PanelCard>
+
+          <PanelCard title="Provider 健康" subtitle="延迟和错误。">
+            <div class="status-stack">
+              {#each providerRows() as provider}
+                <div class="status-row">
+                  <div>
+                    <strong>{provider.name}</strong>
+                    <div class="muted">
+                      请求 {provider.stats.count} · 错误 {provider.stats.error_count} · p95 {provider.stats.p95_latency_ms.toFixed(1)} ms
+                    </div>
+                  </div>
+                  <span class="status-badge {provider.stats.error_count > 0 ? 'warn' : 'good'}">
+                    {provider.stats.last_latency_ms.toFixed(1)} ms
+                  </span>
+                </div>
+              {:else}
+                <div class="empty-state">尚无 provider 观测数据。</div>
+              {/each}
+            </div>
+          </PanelCard>
+        </div>
+
+        <PanelCard title="请求指标" subtitle="计数和分位数。">
+          <div class="table">
+            <div class="table-row header">
+              <span>操作</span>
+              <span>请求 / 错误</span>
+              <span>P50 / P95 / P99</span>
+            </div>
+            {#each operationRows() as row}
+              <div class="table-row">
+                <span>{row.name}</span>
+                <span>{row.stats.count} / {row.stats.error_count}</span>
+                <span>{row.stats.p50_latency_ms.toFixed(1)} / {row.stats.p95_latency_ms.toFixed(1)} / {row.stats.p99_latency_ms.toFixed(1)} ms</span>
+              </div>
+            {:else}
+              <div class="empty-state">还没有操作数据。使用文档页或配置页后这里会开始积累。</div>
+            {/each}
+          </div>
+        </PanelCard>
       </PageShell>
     {/if}
 
     {#if activeSection === 'documents'}
       <PageShell title="文档管理" subtitle="导入、检索、删除。">
         <svelte:fragment slot="actions">
-          <PageTabs
-            items={documentModes}
-            value={documentMode}
-            ariaLabel="文档模式"
-            compact={true}
-            on:change={(event) => switchDocumentMode(event.detail.value)}
-          />
+          <div class="card-actions">
+            <PageTabs
+              items={documentModes}
+              value={documentMode}
+              ariaLabel="文档模式"
+              compact={true}
+              on:change={(event) => switchDocumentMode(event.detail.value)}
+            />
+          </div>
         </svelte:fragment>
 
         {#if documentMode === 'ingest'}
@@ -1044,11 +1212,7 @@
 
                 <div class="field mt-16">
                   <div class="field-label">目标集合</div>
-                  <select bind:value={documentCollection}>
-                    {#each collections as collection}
-                      <option value={collection}>{collection}</option>
-                    {/each}
-                  </select>
+                  <SelectField bind:value={documentKnowledgeBase} options={knowledgeBaseOptions()} ariaLabel="选择目标知识库" />
                 </div>
 
                 <div class="file-list mt-16">
@@ -1078,11 +1242,7 @@
                 <div class="field-row mt-14">
                   <div class="field">
                     <div class="field-label">集合</div>
-                    <select bind:value={documentCollection}>
-                      {#each collections as collection}
-                        <option value={collection}>{collection}</option>
-                      {/each}
-                    </select>
+                    <SelectField bind:value={documentKnowledgeBase} options={knowledgeBaseOptions()} ariaLabel="选择录入知识库" />
                   </div>
                   <div class="field">
                     <div class="field-label">&nbsp;</div>
@@ -1105,11 +1265,7 @@
                 <div class="field-row mt-14">
                   <div class="field">
                     <div class="field-label">集合</div>
-                    <select bind:value={searchCollection}>
-                      {#each collections as collection}
-                        <option value={collection}>{collection}</option>
-                      {/each}
-                    </select>
+                    <SelectField bind:value={searchKnowledgeBase} options={knowledgeBaseOptions()} ariaLabel="选择搜索知识库" />
                   </div>
                   <div class="field">
                     <div class="field-label">返回数量</div>
@@ -1126,11 +1282,7 @@
             <PanelCard title="对话" subtitle="基于检索结果问答。">
                 <div class="field mb-14">
                   <div class="field-label">对话集合</div>
-                  <select bind:value={chatCollection}>
-                    {#each collections as collection}
-                      <option value={collection}>{collection}</option>
-                    {/each}
-                  </select>
+                  <SelectField bind:value={chatKnowledgeBase} options={knowledgeBaseOptions()} ariaLabel="选择对话知识库" />
                 </div>
                 <div class="chat-box">
                   <div class="message-list">
@@ -1205,11 +1357,7 @@
               <div class="field-row">
                 <div class="field">
                   <div class="field-label">集合</div>
-                  <select bind:value={manageCollection} on:change={refreshDocuments}>
-                    {#each collections as collection}
-                      <option value={collection}>{collection}</option>
-                    {/each}
-                  </select>
+                  <SelectField bind:value={manageKnowledgeBase} options={knowledgeBaseOptions()} ariaLabel="选择管理知识库" on:change={refreshDocuments} />
                 </div>
                 <div class="field">
                   <div class="field-label">筛选文件名</div>
@@ -1273,6 +1421,65 @@
               </div>
           </PanelCard>
         {/if}
+      </PageShell>
+    {/if}
+
+    {#if activeSection === 'mcp'}
+      <PageShell title="MCP 调试" subtitle="列出工具、查看 schema，并直接发起调用。">
+        <svelte:fragment slot="actions">
+          <div class="card-actions">
+            <button class="button secondary" on:click={() => refreshMcpTools()} disabled={mcpBusy}>刷新工具</button>
+            <button class="button primary" on:click={runMcpTool} disabled={mcpBusy || !mcpTool}>
+              {mcpBusy ? '调用中...' : '执行 MCP 调用'}
+            </button>
+          </div>
+        </svelte:fragment>
+
+        <div class="grid-2">
+          <PanelCard title="工具列表" subtitle="当前 MCP Server 暴露的工具。">
+            <div class="field">
+              <div class="field-label">选择工具</div>
+              <SelectField
+                bind:value={mcpTool}
+                options={mcpTools.map((item) => ({ value: item.name, label: item.name }))}
+                ariaLabel="选择 MCP 工具"
+              />
+            </div>
+            <div class="status-stack mt-16">
+              {#each mcpTools as tool}
+                <div class="status-row">
+                  <div>
+                    <strong>{tool.name}</strong>
+                    <div class="muted">{tool.description}</div>
+                  </div>
+                  <span class="status-badge {tool.name === mcpTool ? 'good' : 'info'}">
+                    {tool.name === mcpTool ? '已选中' : '可用'}
+                  </span>
+                </div>
+              {:else}
+                <div class="empty-state">暂无 MCP 工具，请先刷新。</div>
+              {/each}
+            </div>
+          </PanelCard>
+
+          <PanelCard title="输入 Schema" subtitle="当前工具的入参定义。">
+            <pre class="code-block">{prettyJson(currentMcpTool()?.input_schema || {})}</pre>
+          </PanelCard>
+        </div>
+
+        <div class="grid-2">
+          <PanelCard title="调用参数" subtitle="直接编辑 JSON 请求体。">
+            <div class="field">
+              <div class="field-label">Arguments JSON</div>
+              <textarea bind:value={mcpArguments} placeholder={"{\"query\":\"FastAPI 是什么？\",\"scope\":\"public\"}"}></textarea>
+            </div>
+            <div class="field-help">这里填的是 MCP tool `arguments`，不是 HTTP 参数。</div>
+          </PanelCard>
+
+          <PanelCard title="调用结果" subtitle="HTTP 调试 facade 返回的标准化结果。">
+            <pre class="code-block">{mcpResult || '尚未执行调用。'}</pre>
+          </PanelCard>
+        </div>
       </PageShell>
     {/if}
 
@@ -1483,97 +1690,5 @@
       </PageShell>
     {/if}
 
-    {#if activeSection === 'status'}
-      <PageShell title="服务状态" subtitle="健康、就绪和请求指标。">
-        <svelte:fragment slot="actions">
-          <div class="card-actions">
-            <button class="button secondary" on:click={refreshStatus} disabled={statusBusy}>{statusBusy ? '刷新中...' : '刷新状态'}</button>
-          </div>
-        </svelte:fragment>
-
-        <div class="grid-3">
-          <div class="card">
-            <div class="metric">
-              <div class="metric-label">健康</div>
-              <div class="metric-value">{safeText(health?.status, healthStatus() ? '正常' : '未知')}</div>
-              <div class="metric-meta">{health?.reasons?.length ? health.reasons.join(' · ') : '无异常原因'}</div>
-            </div>
-          </div>
-          <div class="card">
-            <div class="metric">
-              <div class="metric-label">就绪</div>
-              <div class="metric-value">{ready?.ready ? '是' : '否'}</div>
-              <div class="metric-meta">{ready?.ready ? '依赖满足' : '依赖检查未通过'}</div>
-            </div>
-          </div>
-          <div class="card">
-            <div class="metric">
-              <div class="metric-label">错误率</div>
-              <div class="metric-value">{pct((metrics?.error_count ?? 0) / Math.max(metrics?.total_requests ?? 1, 1))}</div>
-              <div class="metric-meta">总请求 {metrics?.total_requests ?? 0}</div>
-            </div>
-          </div>
-        </div>
-
-        <div class="grid-2">
-          <PanelCard title="运行时详情" subtitle="依赖状态。">
-            <div class="status-stack">
-              {#each runtimeRows() as row}
-                <div class="status-row">
-                  <div>
-                    <strong>{row.label}</strong>
-                    <div class="muted">
-                      {safeText(row.data?.provider || row.data?.name || row.data?.reason || row.data?.status, '未知')}
-                    </div>
-                  </div>
-                  <span class="status-badge {statusTone(row.data?.status || row.data?.state || 'info')}">
-                    {safeText(row.data?.status || row.data?.state, '未知')}
-                  </span>
-                </div>
-              {/each}
-            </div>
-          </PanelCard>
-
-          <PanelCard title="Provider 健康" subtitle="延迟和错误。">
-            <div class="status-stack">
-              {#each providerRows() as provider}
-                <div class="status-row">
-                  <div>
-                    <strong>{provider.name}</strong>
-                    <div class="muted">
-                      请求 {provider.stats.count} · 错误 {provider.stats.error_count} · p95 {provider.stats.p95_latency_ms.toFixed(1)} ms
-                    </div>
-                  </div>
-                  <span class="status-badge {provider.stats.error_count > 0 ? 'warn' : 'good'}">
-                    {provider.stats.last_latency_ms.toFixed(1)} ms
-                  </span>
-                </div>
-              {:else}
-                <div class="empty-state">尚无 provider 观测数据。</div>
-              {/each}
-            </div>
-          </PanelCard>
-        </div>
-
-        <PanelCard title="请求指标" subtitle="计数和分位数。">
-            <div class="table">
-              <div class="table-row header">
-                <span>操作</span>
-                <span>请求 / 错误</span>
-                <span>P50 / P95 / P99</span>
-              </div>
-              {#each operationRows() as row}
-                <div class="table-row">
-                  <span>{row.name}</span>
-                  <span>{row.stats.count} / {row.stats.error_count}</span>
-                  <span>{row.stats.p50_latency_ms.toFixed(1)} / {row.stats.p95_latency_ms.toFixed(1)} / {row.stats.p99_latency_ms.toFixed(1)} ms</span>
-                </div>
-              {:else}
-                <div class="empty-state">还没有操作数据。使用文档页或配置页后这里会开始积累。</div>
-              {/each}
-            </div>
-        </PanelCard>
-      </PageShell>
-    {/if}
   </main>
 </div>
