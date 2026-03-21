@@ -78,6 +78,20 @@ HTTP / MCP
 
 ## 安装
 
+发布版用户可以直接安装 CLI：
+
+```bash
+uv tool install mcp-rag
+```
+
+安装完成后可以直接运行：
+
+```bash
+mcp-rag serve
+```
+
+如果你是在本仓库里开发：
+
 ```bash
 uv sync
 ```
@@ -88,6 +102,10 @@ uv sync
 uv sync --extra local-embeddings
 ```
 
+这里有一个边界要明确：
+- 使用 `uv tool install mcp-rag` 的安装用户不需要 Node.js，也不需要 `pnpm`
+- `pnpm` 只用于维护前端时的开发构建，不是服务运行时依赖
+
 ## 启动
 
 ```bash
@@ -97,10 +115,13 @@ uv run mcp-rag serve
 默认端口是 `8060`。
 
 常用入口：
-- 文档管理页：`http://127.0.0.1:8060/documents-page`
-- 配置页面：`http://127.0.0.1:8060/config-page`
+- 管理面板：`http://127.0.0.1:8060/app`
 - Swagger：`http://127.0.0.1:8060/docs`
 - MCP 端点：`http://127.0.0.1:8060/mcp`
+
+兼容入口：
+- `/documents-page` 会重定向到 `/app/documents`
+- `/config-page` 会重定向到 `/app/config`
 
 初始化数据目录：
 
@@ -112,6 +133,25 @@ uv run mcp-rag init --data-dir ./data
 - 如果 `./data/config.json` 不存在，服务不会报错
 - 启动阶段会自动写入默认配置
 - `ConfigManager.reload_if_changed()` 会在运行中拾取外部配置变更
+
+## 前端与静态资源
+
+当前 Python 包会把 `src/mcp_rag/static/` 下的静态文件一并打进 wheel / sdist。
+
+这意味着：
+- 如果你是安装用户，`uv tool install mcp-rag` 后直接运行即可，不需要单独处理前端构建
+- 如果你在维护前端，需要在发版前把构建产物放到 `src/mcp_rag/static/`
+- 前端开发构建应使用 `pnpm`，但不要把 Node 作为安装用户的前置条件
+
+典型流程：
+
+```bash
+cd frontend
+pnpm install
+pnpm build
+```
+
+发版前需要确认前端构建产物的输出目录就是 `src/mcp_rag/static/`，否则安装包里不会带上对应页面资源。
 
 ## HTTP 接口
 
@@ -311,6 +351,7 @@ uv run python -m compileall src
 - HTTP / MCP 壳层行为
 - Streamable HTTP MCP smoke
 - 基于临时 Chroma 的端到端集成测试
+- 打包元数据与安装说明检查
 
 ## 后续建议
 

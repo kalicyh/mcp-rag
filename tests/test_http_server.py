@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import tempfile
 import unittest
-from unittest.mock import AsyncMock
+from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
@@ -244,6 +245,39 @@ class HttpServerFacadeTests(unittest.TestCase):
         self.assertEqual(ready.status_code, 503)
         self.assertFalse(ready.json()["ready"])
         self.assertEqual(ready.json()["runtime"]["embedding_model"]["status"], "misconfigured")
+
+    def test_root_and_legacy_pages_redirect_to_spa_shell(self):
+        root = self.client.get("/", follow_redirects=False)
+        self.assertEqual(root.status_code, 307)
+        self.assertEqual(root.headers["location"], "/app")
+
+        documents = self.client.get("/documents-page", follow_redirects=False)
+        self.assertEqual(documents.status_code, 307)
+        self.assertEqual(documents.headers["location"], "/app/documents")
+
+        config = self.client.get("/config-page", follow_redirects=False)
+        self.assertEqual(config.status_code, 307)
+        self.assertEqual(config.headers["location"], "/app/config")
+
+    def test_app_returns_clear_503_when_spa_bundle_is_missing(self):
+        with patch.object(http_server_module, "resolve_spa_entry", return_value=None):
+            response = self.client.get("/app")
+
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("SPA assets are unavailable", response.text)
+        self.assertIn("The existing JSON APIs remain available.", response.text)
+
+    def test_app_serves_prebuilt_spa_entry_when_present(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            entry = Path(tmpdir) / "index.html"
+            entry.write_text("<!DOCTYPE html><html><body><div id='app'></div></body></html>", encoding="utf-8")
+
+            with patch.object(http_server_module, "resolve_spa_entry", return_value=entry):
+                response = self.client.get("/app/documents")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("text/html", response.headers["content-type"])
+        self.assertIn("<div id='app'></div>", response.text)
 
     def test_http_routes_expose_request_and_trace_headers(self):
         service = self._fake_service()
