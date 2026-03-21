@@ -1009,11 +1009,7 @@
 
     {#if activeSection === 'documents'}
       <section class="section">
-        <div class="section-head">
-          <div>
-            <h2>文档管理</h2>
-            <p>覆盖上传、手工录入、检索、对话、文件与片段管理。</p>
-          </div>
+        <div class="section-toolbar">
           <div class="panel-tabs">
             {#each documentModes as mode}
               <button class="panel-tab {documentMode === mode.id ? 'active' : ''}" on:click={() => switchDocumentMode(mode.id)}>
@@ -1328,11 +1324,7 @@
 
     {#if activeSection === 'config'}
       <section class="section">
-        <div class="section-head">
-          <div>
-            <h2>配置中心</h2>
-            <p>支持热更新、重载、重置，以及常用治理项的批量编辑。</p>
-          </div>
+        <div class="section-toolbar actions-only">
           <div class="card-actions">
             <button class="button secondary" on:click={reloadConfig} disabled={configBusy}>重新加载</button>
             <button class="button ghost" on:click={resetConfig} disabled={configBusy}>重置默认</button>
@@ -1579,11 +1571,7 @@
 
     {#if activeSection === 'status'}
       <section class="section">
-        <div class="section-head">
-          <div>
-            <h2>服务状态</h2>
-            <p>查看 health、ready、metrics 和 provider 状态。</p>
-          </div>
+        <div class="section-toolbar actions-only">
           <div class="card-actions">
             <button class="button secondary" on:click={refreshStatus} disabled={statusBusy}>{statusBusy ? '刷新中...' : '刷新状态'}</button>
           </div>

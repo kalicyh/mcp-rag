@@ -287,6 +287,23 @@ a {
   color: var(--muted);
 }
 
+.section-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: var(--radius-xl);
+  background: rgba(255, 255, 255, 0.74);
+  border: 1px solid rgba(15, 23, 42, 0.06);
+  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.05);
+}
+
+.section-toolbar.actions-only {
+  justify-content: flex-end;
+}
+
 .grid-4 {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -311,10 +328,6 @@ a {
   border-radius: var(--radius-xl);
   box-shadow: var(--shadow);
   backdrop-filter: blur(18px);
-}
-
-.card.soft {
-  background: rgba(255, 251, 245, 0.82);
 }
 
 .card-header {
