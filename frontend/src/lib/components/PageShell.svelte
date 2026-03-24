@@ -44,6 +44,7 @@
   .page-shell {
     display: grid;
     gap: 16px;
+    align-content: start;
   }
 
   .page-shell__header {
@@ -62,6 +63,8 @@
   .page-shell__copy {
     display: grid;
     gap: 2px;
+    flex: 1 1 240px;
+    min-width: 0;
   }
 
   .page-shell__copy h2 {
@@ -84,6 +87,8 @@
     justify-content: flex-end;
     gap: 8px 10px;
     margin-left: auto;
+    flex: 1 1 320px;
+    min-width: 0;
   }
 
   .page-shell__meta,
@@ -92,6 +97,7 @@
     flex-wrap: wrap;
     align-items: center;
     gap: 10px;
+    min-width: 0;
   }
 
   .page-shell__toolbar {
