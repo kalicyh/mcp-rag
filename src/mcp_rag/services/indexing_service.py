@@ -28,6 +28,36 @@ class IndexingService:
     def __init__(self, runtime: ServiceRuntime):
         self.runtime = runtime
 
+    @staticmethod
+    def _is_expected_upload_failure(exc: Exception) -> bool:
+        if isinstance(exc, QuotaExceededError):
+            return True
+        message = str(exc)
+        return any(
+            token in message
+            for token in (
+                "Embedding API error:",
+                "429",
+                "余额不足",
+                "无可用资源包",
+                "cooldown",
+                "rate limit",
+            )
+        )
+
+    def _log_upload_failure(self, *, filename: str, collection_name: str, exc: Exception) -> None:
+        provider = getattr(self.runtime.settings, "embedding_provider", "unknown")
+        if self._is_expected_upload_failure(exc):
+            logger.warning(
+                "Upload failed for %s in %s via embedding provider %s: %s",
+                filename,
+                collection_name,
+                provider,
+                exc,
+            )
+            return
+        logger.exception("Failed to process upload %s in %s", filename, collection_name)
+
     async def add_document(self, request: DocumentRequest) -> Dict[str, Any]:
         request_context = normalize_request_context(
             request.context,
@@ -179,10 +209,15 @@ class IndexingService:
                     )
                 )
             except Exception as exc:
-                logger.exception("Failed to process upload %s", getattr(upload, "filename", "unknown"))
+                failed_filename = Path(getattr(upload, "filename", "unknown")).name
+                self._log_upload_failure(
+                    filename=failed_filename,
+                    collection_name=collection_name,
+                    exc=exc,
+                )
                 results.append(
                     UploadFileResult(
-                        filename=getattr(upload, "filename", "unknown"),
+                        filename=failed_filename,
                         file_type="unknown",
                         content_length=0,
                         processed=False,

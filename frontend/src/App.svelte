@@ -18,6 +18,11 @@
     { id: 'search', title: '检索' },
     { id: 'manage', title: '管理' },
   ];
+  const configModes = [
+    { id: 'provider', title: '服务商配置' },
+    { id: 'system', title: '系统配置' },
+    { id: 'advanced', title: '高级配置' },
+  ];
   const routeSectionMap = {
     overview: 'overview',
     documents: 'documents',
@@ -29,11 +34,27 @@
 
   function emptyDraft() {
     return {
+      host: '0.0.0.0',
+      port: 8060,
+      http_port: 8060,
+      debug: false,
+      vector_db_type: 'chroma',
+      chroma_persist_directory: './data/chroma',
+      knowledge_base_db_path: './data/knowledge_bases.sqlite3',
+      qdrant_url: 'http://localhost:6333',
       embedding_provider: '',
       embedding_fallback_provider: '',
+      embedding_device: 'cpu',
+      embedding_cache_dir: '',
+      embedding_base_url: '',
+      embedding_model: '',
+      embedding_api_key: '',
       llm_provider: '',
       llm_fallback_provider: '',
       llm_model: '',
+      llm_base_url: '',
+      llm_api_key: '',
+      enable_thinking: true,
       enable_llm_summary: false,
       enable_reranker: false,
       enable_cache: false,
@@ -87,6 +108,7 @@
         },
       },
       provider_configs_text: '{}',
+      full_config_text: '{}',
     };
   }
 
@@ -171,8 +193,20 @@
     return value === null || value === undefined || value === '' ? fallback : String(value);
   }
 
+  function summarizeUploadFailures(payload) {
+    const failedItems = Array.isArray(payload?.results)
+      ? payload.results.filter((item) => !item?.processed)
+      : [];
+    if (!failedItems.length) return '';
+    return failedItems
+      .slice(0, 3)
+      .map((item) => `${safeText(item.filename, 'unknown')}: ${safeText(item.error, '上传失败')}`)
+      .join('；');
+  }
+
   let activeSection = 'overview';
   let documentMode = 'ingest';
+  let configMode = 'provider';
   let managedPage = 0;
   let managedPageSize = 8;
   let queuedFiles = [];
@@ -275,6 +309,7 @@
       const parsed = JSON.parse(raw);
       if (parsed.activeSection) activeSection = routeSectionMap[parsed.activeSection] || parsed.activeSection;
       if (parsed.documentMode) documentMode = parsed.documentMode;
+      if (parsed.configMode) configMode = parsed.configMode;
       if (parsed.identity) identity = normalizeIdentity(parsed.identity);
       if (parsed.selectedKnowledgeBase) selectedKnowledgeBase = parsed.selectedKnowledgeBase;
       if (parsed.searchKnowledgeBase) searchKnowledgeBase = parsed.searchKnowledgeBase;
@@ -295,6 +330,7 @@
     const payload = {
       activeSection,
       documentMode,
+      configMode,
       identity,
       selectedKnowledgeBase,
       documentKnowledgeBase,
@@ -345,6 +381,17 @@
     writeState();
   }
 
+  function switchConfigMode(mode) {
+    if (mode === 'advanced') {
+      configDraft = {
+        ...configDraft,
+        full_config_text: JSON.stringify(buildConfigPayloadFromDraft(), null, 2),
+      };
+    }
+    configMode = mode;
+    writeState();
+  }
+
   function setKnowledgeBase(value) {
     selectedKnowledgeBase = value;
     documentKnowledgeBase = value;
@@ -361,11 +408,24 @@
       return;
     }
 
+    draft.host = payload.host ?? draft.host;
+    draft.port = Number(payload.port ?? draft.port);
+    draft.http_port = Number(payload.http_port ?? draft.http_port);
+    draft.debug = Boolean(payload.debug);
+    draft.vector_db_type = payload.vector_db_type ?? draft.vector_db_type;
+    draft.chroma_persist_directory = payload.chroma_persist_directory ?? draft.chroma_persist_directory;
+    draft.knowledge_base_db_path = payload.knowledge_base_db_path ?? draft.knowledge_base_db_path;
+    draft.qdrant_url = payload.qdrant_url ?? draft.qdrant_url;
     draft.embedding_provider = payload.embedding_provider ?? draft.embedding_provider;
     draft.embedding_fallback_provider = payload.embedding_fallback_provider ?? '';
+    draft.embedding_device = payload.embedding_device ?? draft.embedding_device;
+    draft.embedding_cache_dir = payload.embedding_cache_dir ?? '';
     draft.llm_provider = payload.llm_provider ?? draft.llm_provider;
     draft.llm_fallback_provider = payload.llm_fallback_provider ?? '';
     draft.llm_model = payload.llm_model ?? draft.llm_model;
+    draft.llm_base_url = payload.llm_base_url ?? '';
+    draft.llm_api_key = payload.llm_api_key ?? '';
+    draft.enable_thinking = payload.enable_thinking ?? draft.enable_thinking;
     draft.enable_llm_summary = Boolean(payload.enable_llm_summary);
     draft.enable_reranker = Boolean(payload.enable_reranker);
     draft.enable_cache = Boolean(payload.enable_cache);
@@ -406,7 +466,137 @@
       },
     };
     draft.provider_configs_text = JSON.stringify(payload.provider_configs ?? {}, null, 2);
+    const activeEmbeddingProvider = payload.provider_configs?.[draft.embedding_provider] ?? {};
+    draft.embedding_base_url = activeEmbeddingProvider.base_url ?? '';
+    draft.embedding_model = activeEmbeddingProvider.model ?? '';
+    draft.embedding_api_key = activeEmbeddingProvider.api_key ?? '';
+    draft.full_config_text = JSON.stringify(payload, null, 2);
     configDraft = draft;
+  }
+
+  function buildConfigPayloadFromDraft() {
+    const providerConfigs = parseJsonOr({}, configDraft.provider_configs_text);
+
+    return {
+      host: configDraft.host,
+      port: Number(configDraft.port),
+      http_port: Number(configDraft.http_port),
+      debug: Boolean(configDraft.debug),
+      vector_db_type: configDraft.vector_db_type,
+      chroma_persist_directory: configDraft.chroma_persist_directory,
+      knowledge_base_db_path: configDraft.knowledge_base_db_path,
+      qdrant_url: configDraft.qdrant_url,
+      embedding_provider: configDraft.embedding_provider,
+      embedding_fallback_provider: configDraft.embedding_fallback_provider || null,
+      embedding_device: configDraft.embedding_device,
+      embedding_cache_dir: configDraft.embedding_cache_dir || null,
+      llm_provider: configDraft.llm_provider,
+      llm_fallback_provider: configDraft.llm_fallback_provider || null,
+      llm_model: configDraft.llm_model,
+      llm_base_url: configDraft.llm_base_url,
+      llm_api_key: configDraft.llm_api_key || null,
+      enable_thinking: Boolean(configDraft.enable_thinking),
+      enable_llm_summary: Boolean(configDraft.enable_llm_summary),
+      enable_reranker: Boolean(configDraft.enable_reranker),
+      enable_cache: Boolean(configDraft.enable_cache),
+      max_retrieval_results: Number(configDraft.max_retrieval_results),
+      similarity_threshold: Number(configDraft.similarity_threshold),
+      cache: {
+        enabled: Boolean(configDraft.cache.enabled),
+        max_entries: Number(configDraft.cache.max_entries),
+        ttl_seconds: Number(configDraft.cache.ttl_seconds),
+      },
+      security: {
+        enabled: Boolean(configDraft.security.enabled),
+        allow_anonymous: Boolean(configDraft.security.allow_anonymous),
+        api_keys: splitKeys(configDraft.security.api_keys_text),
+        tenant_api_keys: parseJsonOr({}, configDraft.security.tenant_api_keys_text),
+      },
+      rate_limit: {
+        requests_per_window: Number(configDraft.rate_limit.requests_per_window),
+        window_seconds: Number(configDraft.rate_limit.window_seconds),
+        burst: Number(configDraft.rate_limit.burst),
+      },
+      quotas: {
+        max_upload_files: Number(configDraft.quotas.max_upload_files),
+        max_upload_bytes: Number(configDraft.quotas.max_upload_bytes),
+        max_upload_file_bytes: Number(configDraft.quotas.max_upload_file_bytes),
+        max_index_documents: Number(configDraft.quotas.max_index_documents),
+        max_index_chunks: Number(configDraft.quotas.max_index_chunks),
+        max_index_chars: Number(configDraft.quotas.max_index_chars),
+      },
+      observability: {
+        warning_error_rate: Number(configDraft.observability.warning_error_rate),
+        critical_error_rate: Number(configDraft.observability.critical_error_rate),
+        slow_request_ms: Number(configDraft.observability.slow_request_ms),
+        latency_window_size: Number(configDraft.observability.latency_window_size),
+      },
+      provider_budget: {
+        enabled: Boolean(configDraft.provider_budget.enabled),
+        embeddings: {
+          requests_per_window: Number(configDraft.provider_budget.embeddings.requests_per_window),
+          window_seconds: Number(configDraft.provider_budget.embeddings.window_seconds),
+          burst: Number(configDraft.provider_budget.embeddings.burst),
+          failure_threshold: Number(configDraft.provider_budget.embeddings.failure_threshold),
+          cooldown_seconds: Number(configDraft.provider_budget.embeddings.cooldown_seconds),
+        },
+        llm: {
+          requests_per_window: Number(configDraft.provider_budget.llm.requests_per_window),
+          window_seconds: Number(configDraft.provider_budget.llm.window_seconds),
+          burst: Number(configDraft.provider_budget.llm.burst),
+          failure_threshold: Number(configDraft.provider_budget.llm.failure_threshold),
+          cooldown_seconds: Number(configDraft.provider_budget.llm.cooldown_seconds),
+        },
+      },
+      provider_configs: providerConfigs,
+    };
+  }
+
+  function updateEmbeddingProviderConfig(field, value) {
+    const providerName = String(configDraft.embedding_provider || '').trim();
+    if (!providerName) return;
+    const providerConfigs = parseJsonOr({}, configDraft.provider_configs_text);
+    providerConfigs[providerName] = {
+      ...(providerConfigs[providerName] || {}),
+      [field]: value,
+    };
+    configDraft = {
+      ...configDraft,
+      provider_configs_text: JSON.stringify(providerConfigs, null, 2),
+      [field === 'base_url' ? 'embedding_base_url' : field === 'model' ? 'embedding_model' : 'embedding_api_key']: value,
+    };
+  }
+
+  function syncEmbeddingProviderDraft(providerName) {
+    const providerConfigs = parseJsonOr({}, configDraft.provider_configs_text);
+    const activeProvider = providerConfigs?.[providerName] ?? {};
+    configDraft = {
+      ...configDraft,
+      embedding_base_url: activeProvider.base_url ?? '',
+      embedding_model: activeProvider.model ?? '',
+      embedding_api_key: activeProvider.api_key ?? '',
+    };
+  }
+
+  function providerConfigField(providerName, field, fallback = '') {
+    const providerConfigs = parseJsonOr({}, configDraft.provider_configs_text);
+    return providerConfigs?.[providerName]?.[field] ?? fallback;
+  }
+
+  function updateNamedProviderConfig(providerName, field, value) {
+    const providerConfigs = parseJsonOr({}, configDraft.provider_configs_text);
+    providerConfigs[providerName] = {
+      ...(providerConfigs[providerName] || {}),
+      [field]: value,
+    };
+    configDraft = {
+      ...configDraft,
+      provider_configs_text: JSON.stringify(providerConfigs, null, 2),
+    };
+
+    if (providerName === configDraft.embedding_provider) {
+      syncEmbeddingProviderDraft(providerName);
+    }
   }
 
   function buildRequestContext() {
@@ -585,13 +775,24 @@
     }
     uploadBusy = true;
     try {
-      await api.uploadFiles({
+      const payload = await api.uploadFiles({
         files: queuedFiles,
         ...knowledgeBaseRequest(documentKnowledgeBase),
         ...identity,
       });
-      queuedFiles = [];
-      pushToast('上传完成', '文件已提交到后台处理。', 'success');
+      const successful = Number(payload?.successful ?? 0);
+      const failed = Number(payload?.failed ?? 0);
+      const failureSummary = summarizeUploadFailures(payload);
+      if (successful > 0) {
+        queuedFiles = [];
+      }
+      if (failed > 0 && successful === 0) {
+        pushToast('上传失败', failureSummary || `共 ${failed} 个文件处理失败。`, 'error');
+      } else if (failed > 0) {
+        pushToast('部分上传成功', `成功 ${successful} 个，失败 ${failed} 个。${failureSummary}`, 'warning');
+      } else {
+        pushToast('上传完成', `成功处理 ${successful} 个文件。`, 'success');
+      }
       await refreshKnowledgeBases({ silent: true });
       if (documentMode === 'manage') await refreshDocuments();
     } catch (error) {
@@ -794,66 +995,13 @@
   async function saveConfig() {
     configBusy = true;
     try {
-      const updates = {
-        embedding_provider: configDraft.embedding_provider,
-        embedding_fallback_provider: configDraft.embedding_fallback_provider || null,
-        llm_provider: configDraft.llm_provider,
-        llm_fallback_provider: configDraft.llm_fallback_provider || null,
-        llm_model: configDraft.llm_model,
-        enable_llm_summary: configDraft.enable_llm_summary,
-        enable_reranker: configDraft.enable_reranker,
-        enable_cache: configDraft.enable_cache,
-        max_retrieval_results: Number(configDraft.max_retrieval_results),
-        similarity_threshold: Number(configDraft.similarity_threshold),
-        cache: {
-          enabled: configDraft.cache.enabled,
-          max_entries: Number(configDraft.cache.max_entries),
-          ttl_seconds: Number(configDraft.cache.ttl_seconds),
-        },
-        security: {
-          enabled: configDraft.security.enabled,
-          allow_anonymous: configDraft.security.allow_anonymous,
-          api_keys: splitKeys(configDraft.security.api_keys_text),
-          tenant_api_keys: parseJsonOr({}, configDraft.security.tenant_api_keys_text),
-        },
-        rate_limit: {
-          requests_per_window: Number(configDraft.rate_limit.requests_per_window),
-          window_seconds: Number(configDraft.rate_limit.window_seconds),
-          burst: Number(configDraft.rate_limit.burst),
-        },
-        quotas: {
-          max_upload_files: Number(configDraft.quotas.max_upload_files),
-          max_upload_bytes: Number(configDraft.quotas.max_upload_bytes),
-          max_upload_file_bytes: Number(configDraft.quotas.max_upload_file_bytes),
-          max_index_documents: Number(configDraft.quotas.max_index_documents),
-          max_index_chunks: Number(configDraft.quotas.max_index_chunks),
-          max_index_chars: Number(configDraft.quotas.max_index_chars),
-        },
-        observability: {
-          warning_error_rate: Number(configDraft.observability.warning_error_rate),
-          critical_error_rate: Number(configDraft.observability.critical_error_rate),
-          slow_request_ms: Number(configDraft.observability.slow_request_ms),
-          latency_window_size: Number(configDraft.observability.latency_window_size),
-        },
-        provider_budget: {
-          enabled: configDraft.provider_budget.enabled,
-          embeddings: {
-            requests_per_window: Number(configDraft.provider_budget.embeddings.requests_per_window),
-            window_seconds: Number(configDraft.provider_budget.embeddings.window_seconds),
-            burst: Number(configDraft.provider_budget.embeddings.burst),
-            failure_threshold: Number(configDraft.provider_budget.embeddings.failure_threshold),
-            cooldown_seconds: Number(configDraft.provider_budget.embeddings.cooldown_seconds),
-          },
-          llm: {
-            requests_per_window: Number(configDraft.provider_budget.llm.requests_per_window),
-            window_seconds: Number(configDraft.provider_budget.llm.window_seconds),
-            burst: Number(configDraft.provider_budget.llm.burst),
-            failure_threshold: Number(configDraft.provider_budget.llm.failure_threshold),
-            cooldown_seconds: Number(configDraft.provider_budget.llm.cooldown_seconds),
-          },
-        },
-        provider_configs: parseJsonOr({}, configDraft.provider_configs_text),
-      };
+      let updates = buildConfigPayloadFromDraft();
+      if (configMode === 'advanced') {
+        updates = parseJsonOr(null, configDraft.full_config_text);
+        if (!updates || typeof updates !== 'object' || Array.isArray(updates)) {
+          throw new Error('高级配置必须是 JSON 对象');
+        }
+      }
       await api.updateConfig(updates, identity);
       pushToast('配置已保存', '后台已重新加载运行时。', 'success');
       await refreshOverview();
@@ -1484,71 +1632,227 @@
     {/if}
 
     {#if activeSection === 'config'}
-      <PageShell title="配置中心" subtitle="热更新、重载和治理策略。">
+      <PageShell title="配置中心" subtitle="按服务商、系统、高级三层管理配置。">
         <svelte:fragment slot="actions">
           <div class="card-actions">
+            <PageTabs
+              items={configModes}
+              value={configMode}
+              ariaLabel="配置模式"
+              compact={true}
+              on:change={(event) => switchConfigMode(event.detail.value)}
+            />
             <button class="button secondary" on:click={reloadConfig} disabled={configBusy}>重新加载</button>
             <button class="button ghost" on:click={resetConfig} disabled={configBusy}>重置默认</button>
             <button class="button primary" on:click={saveConfig} disabled={configBusy}>{configBusy ? '保存中...' : '保存配置'}</button>
           </div>
         </svelte:fragment>
 
-        <div class="grid-2">
-          <PanelCard title="检索与模型" subtitle="常用检索和模型参数。">
+        {#if configMode === 'provider'}
+          <div class="grid-2">
+            <PanelCard title="豆包" subtitle="配置豆包的 LLM 与向量服务参数。">
               <div class="field-row">
                 <div class="field">
-                  <div class="field-label">Embedding Provider</div>
-                  <input bind:value={configDraft.embedding_provider} placeholder="zhipu / m3e-small / e5-small" />
+                  <div class="field-label">LLM Base URL</div>
+                  <input bind:value={configDraft.llm_base_url} placeholder="https://ark.cn-beijing.volces.com/api/v3" />
                 </div>
                 <div class="field">
-                  <div class="field-label">Embedding Fallback</div>
-                  <input bind:value={configDraft.embedding_fallback_provider} placeholder="可选" />
+                  <div class="field-label">LLM Model</div>
+                  <input bind:value={configDraft.llm_model} placeholder="doubao-seed-1.6-250615" />
                 </div>
               </div>
               <div class="field-row mt-14">
                 <div class="field">
-                  <div class="field-label">LLM Provider</div>
+                  <div class="field-label">LLM API Key</div>
+                  <input bind:value={configDraft.llm_api_key} placeholder="可选" />
+                </div>
+                <div class="field">
+                  <div class="field-label">LLM 能力</div>
+                  <div class="field-switch">
+                    <label class="collection-chip"><input type="checkbox" bind:checked={configDraft.enable_thinking} /> 深度思考</label>
+                    <label class="collection-chip"><input type="checkbox" bind:checked={configDraft.enable_llm_summary} /> 检索总结</label>
+                  </div>
+                </div>
+              </div>
+              <div class="divider my-18"></div>
+              <div class="field-row">
+                <div class="field">
+                  <div class="field-label">向量 Base URL</div>
+                  <input
+                    value={providerConfigField('doubao', 'base_url', 'https://ark.cn-beijing.volces.com/api/v3')}
+                    placeholder="https://..."
+                    on:input={(event) => updateNamedProviderConfig('doubao', 'base_url', event.currentTarget.value)}
+                  />
+                </div>
+                <div class="field">
+                  <div class="field-label">向量 Model</div>
+                  <input
+                    value={providerConfigField('doubao', 'model', 'doubao-embedding-text-240715')}
+                    placeholder="doubao-embedding-text-240715"
+                    on:input={(event) => updateNamedProviderConfig('doubao', 'model', event.currentTarget.value)}
+                  />
+                </div>
+              </div>
+              <div class="field-row mt-14">
+                <div class="field">
+                  <div class="field-label">向量 API Key</div>
+                  <input
+                    value={providerConfigField('doubao', 'api_key', '')}
+                    placeholder="可选"
+                    on:input={(event) => updateNamedProviderConfig('doubao', 'api_key', event.currentTarget.value)}
+                  />
+                </div>
+                <div class="field">
+                  <div class="field-label">适用范围</div>
+                  <div class="field-help">豆包当前可同时作为 LLM 服务商和向量服务商。</div>
+                </div>
+              </div>
+            </PanelCard>
+
+            <PanelCard title="智谱" subtitle="配置智谱的向量服务参数。">
+              <div class="field-row">
+                <div class="field">
+                  <div class="field-label">向量 Base URL</div>
+                  <input
+                    value={providerConfigField('zhipu', 'base_url', 'https://open.bigmodel.cn/api/paas/v4')}
+                    placeholder="https://open.bigmodel.cn/api/paas/v4"
+                    on:input={(event) => updateNamedProviderConfig('zhipu', 'base_url', event.currentTarget.value)}
+                  />
+                </div>
+                <div class="field">
+                  <div class="field-label">向量 Model</div>
+                  <input
+                    value={providerConfigField('zhipu', 'model', 'embedding-3')}
+                    placeholder="embedding-3"
+                    on:input={(event) => updateNamedProviderConfig('zhipu', 'model', event.currentTarget.value)}
+                  />
+                </div>
+              </div>
+              <div class="field-row mt-14">
+                <div class="field">
+                  <div class="field-label">向量 API Key</div>
+                  <input
+                    value={providerConfigField('zhipu', 'api_key', '')}
+                    placeholder="可选"
+                    on:input={(event) => updateNamedProviderConfig('zhipu', 'api_key', event.currentTarget.value)}
+                  />
+                </div>
+                <div class="field">
+                  <div class="field-label">适用范围</div>
+                  <div class="field-help">当前后端里智谱主要用于向量服务商；LLM 选择仍在系统设置里按已支持 provider 切换。</div>
+                </div>
+              </div>
+            </PanelCard>
+
+            <PanelCard title="本地模型" subtitle="配置本地向量环境与 Ollama 等本地能力。">
+              <div class="field-row mt-14">
+                <div class="field">
+                  <div class="field-label">Embedding Device</div>
+                  <input bind:value={configDraft.embedding_device} placeholder="cpu / cuda" />
+                </div>
+                <div class="field">
+                  <div class="field-label">Embedding Cache Dir</div>
+                  <input bind:value={configDraft.embedding_cache_dir} placeholder="缓存目录，可选" />
+                </div>
+              </div>
+              <div class="field-help">如果系统设置里选择本地 provider，例如 `ollama` 或本地 embedding provider，这里的本地环境参数会生效。</div>
+            </PanelCard>
+          </div>
+        {/if}
+
+        {#if configMode === 'system'}
+          <div class="grid-2">
+            <PanelCard title="服务与存储" subtitle="服务端口、向量库和持久化目录。">
+              <div class="field-row">
+                <div class="field">
+                  <div class="field-label">Host</div>
+                  <input bind:value={configDraft.host} />
+                </div>
+                <div class="field">
+                  <div class="field-label">Port / HTTP Port</div>
+                  <div class="field-row">
+                    <input type="number" min="1" bind:value={configDraft.port} />
+                    <input type="number" min="1" bind:value={configDraft.http_port} />
+                  </div>
+                </div>
+              </div>
+              <div class="field-row mt-14">
+                <div class="field">
+                  <div class="field-label">Vector DB Type</div>
+                  <input bind:value={configDraft.vector_db_type} placeholder="chroma / qdrant" />
+                </div>
+                <div class="field">
+                  <div class="field-label">Debug</div>
+                  <label class="collection-chip"><input type="checkbox" bind:checked={configDraft.debug} /> 启用调试日志</label>
+                </div>
+              </div>
+              <div class="field mt-14">
+                <div class="field-label">Chroma Persist Directory</div>
+                <input bind:value={configDraft.chroma_persist_directory} />
+              </div>
+              <div class="field mt-14">
+                <div class="field-label">Knowledge Base DB Path</div>
+                <input bind:value={configDraft.knowledge_base_db_path} />
+              </div>
+              <div class="field mt-14">
+                <div class="field-label">Qdrant URL</div>
+                <input bind:value={configDraft.qdrant_url} />
+              </div>
+            </PanelCard>
+
+            <PanelCard title="检索策略" subtitle="检索数量、阈值和功能开关。">
+              <div class="field-row">
+                <div class="field">
+                  <div class="field-label">向量服务商</div>
+                  <input
+                    bind:value={configDraft.embedding_provider}
+                    placeholder="zhipu / doubao / m3e-small / e5-small"
+                    on:change={() => syncEmbeddingProviderDraft(configDraft.embedding_provider)}
+                  />
+                </div>
+                <div class="field">
+                  <div class="field-label">向量服务商回退</div>
+                  <input bind:value={configDraft.embedding_fallback_provider} placeholder="可选" />
+                </div>
+              </div>
+              <div class="field-row">
+                <div class="field">
+                  <div class="field-label">LLM 服务商</div>
                   <input bind:value={configDraft.llm_provider} placeholder="doubao / ollama" />
                 </div>
                 <div class="field">
-                  <div class="field-label">LLM Fallback</div>
+                  <div class="field-label">LLM 服务商回退</div>
                   <input bind:value={configDraft.llm_fallback_provider} placeholder="可选" />
                 </div>
               </div>
               <div class="field-row mt-14">
                 <div class="field">
-                  <div class="field-label">LLM Model</div>
-                  <input bind:value={configDraft.llm_model} />
-                </div>
-                <div class="field">
                   <div class="field-label">最大检索结果</div>
                   <input type="number" min="1" bind:value={configDraft.max_retrieval_results} />
                 </div>
-              </div>
-              <div class="field-row mt-14">
                 <div class="field">
                   <div class="field-label">相似度阈值</div>
                   <input type="number" step="0.01" min="0" max="1" bind:value={configDraft.similarity_threshold} />
                 </div>
-                <div class="field">
-                  <div class="field-label">功能开关</div>
-                  <div class="field-switch">
-                    <label class="collection-chip"><input type="checkbox" bind:checked={configDraft.enable_cache} /> 缓存</label>
-                    <label class="collection-chip"><input type="checkbox" bind:checked={configDraft.enable_reranker} /> 重排</label>
-                    <label class="collection-chip"><input type="checkbox" bind:checked={configDraft.enable_llm_summary} /> 总结</label>
-                  </div>
+              </div>
+              <div class="field mt-14">
+                <div class="field-label">功能开关</div>
+                <div class="field-switch">
+                  <label class="collection-chip"><input type="checkbox" bind:checked={configDraft.enable_cache} /> 缓存</label>
+                  <label class="collection-chip"><input type="checkbox" bind:checked={configDraft.enable_reranker} /> 重排</label>
+                  <label class="collection-chip"><input type="checkbox" bind:checked={configDraft.enable_llm_summary} /> 总结</label>
                 </div>
               </div>
-          </PanelCard>
+            </PanelCard>
 
-          <PanelCard title="缓存与安全" subtitle="缓存、鉴权、租户 key。">
+            <PanelCard title="缓存与安全" subtitle="缓存、鉴权和租户级 key。">
               <div class="field-row">
                 <div class="field">
-                  <div class="field-label">Cache Enabled</div>
+                  <div class="field-label">Cache</div>
                   <label class="collection-chip"><input type="checkbox" bind:checked={configDraft.cache.enabled} /> 启用请求级缓存</label>
                 </div>
                 <div class="field">
-                  <div class="field-label">Cache TTL / Entries</div>
+                  <div class="field-label">TTL / Entries</div>
                   <div class="field-row">
                     <input type="number" min="1" bind:value={configDraft.cache.ttl_seconds} />
                     <input type="number" min="1" bind:value={configDraft.cache.max_entries} />
@@ -1557,7 +1861,7 @@
               </div>
               <div class="field-row mt-14">
                 <div class="field">
-                  <div class="field-label">Security Enabled</div>
+                  <div class="field-label">Security</div>
                   <label class="collection-chip"><input type="checkbox" bind:checked={configDraft.security.enabled} /> 启用鉴权</label>
                 </div>
                 <div class="field">
@@ -1569,13 +1873,13 @@
                 <div class="field-label">API Keys</div>
                 <textarea bind:value={configDraft.security.api_keys_text} placeholder="每行一个 API key"></textarea>
               </div>
-                <div class="field mt-14">
-                  <div class="field-label">Tenant API Keys JSON</div>
-                  <textarea bind:value={configDraft.security.tenant_api_keys_text} placeholder="u1_default: [key]"></textarea>
-                </div>
-          </PanelCard>
+              <div class="field mt-14">
+                <div class="field-label">Tenant API Keys JSON</div>
+                <textarea bind:value={configDraft.security.tenant_api_keys_text} placeholder={'{"u1_default": ["key-1"]}'}></textarea>
+              </div>
+            </PanelCard>
 
-          <PanelCard title="限流与配额" subtitle="控制请求和索引上限。">
+            <PanelCard title="限流与配额" subtitle="请求窗口和索引上限。">
               <div class="field-row">
                 <div class="field">
                   <div class="field-label">Requests / Window</div>
@@ -1621,9 +1925,9 @@
                   <input type="number" min="1" bind:value={configDraft.quotas.max_index_chars} />
                 </div>
               </div>
-          </PanelCard>
+            </PanelCard>
 
-          <PanelCard title="观测与 Provider Budget" subtitle="健康阈值和 provider 预算。">
+            <PanelCard title="观测与 Provider Budget" subtitle="健康阈值和 provider 预算。">
               <div class="field-row">
                 <div class="field">
                   <div class="field-label">Warning Error Rate</div>
@@ -1650,43 +1954,49 @@
               </div>
               <div class="field-row mt-14">
                 <div class="field">
-                  <div class="field-label">Embedding Window</div>
-                  <input type="number" min="1" bind:value={configDraft.provider_budget.embeddings.requests_per_window} />
+                  <div class="field-label">Embedding Window / Burst</div>
+                  <div class="field-row">
+                    <input type="number" min="1" bind:value={configDraft.provider_budget.embeddings.requests_per_window} />
+                    <input type="number" min="0" bind:value={configDraft.provider_budget.embeddings.burst} />
+                  </div>
                 </div>
                 <div class="field">
-                  <div class="field-label">Embedding Burst</div>
-                  <input type="number" min="0" bind:value={configDraft.provider_budget.embeddings.burst} />
+                  <div class="field-label">Embedding Failure / Cooldown</div>
+                  <div class="field-row">
+                    <input type="number" min="0" bind:value={configDraft.provider_budget.embeddings.failure_threshold} />
+                    <input type="number" min="0" bind:value={configDraft.provider_budget.embeddings.cooldown_seconds} />
+                  </div>
                 </div>
               </div>
               <div class="field-row mt-14">
                 <div class="field">
-                  <div class="field-label">LLM Window</div>
-                  <input type="number" min="1" bind:value={configDraft.provider_budget.llm.requests_per_window} />
+                  <div class="field-label">LLM Window / Burst</div>
+                  <div class="field-row">
+                    <input type="number" min="1" bind:value={configDraft.provider_budget.llm.requests_per_window} />
+                    <input type="number" min="0" bind:value={configDraft.provider_budget.llm.burst} />
+                  </div>
                 </div>
                 <div class="field">
-                  <div class="field-label">LLM Burst</div>
-                  <input type="number" min="0" bind:value={configDraft.provider_budget.llm.burst} />
+                  <div class="field-label">LLM Failure / Cooldown</div>
+                  <div class="field-row">
+                    <input type="number" min="0" bind:value={configDraft.provider_budget.llm.failure_threshold} />
+                    <input type="number" min="0" bind:value={configDraft.provider_budget.llm.cooldown_seconds} />
+                  </div>
                 </div>
               </div>
-              <div class="field-row mt-14">
-                <div class="field">
-                  <div class="field-label">Failure Threshold</div>
-                  <input type="number" min="0" bind:value={configDraft.provider_budget.llm.failure_threshold} />
-                </div>
-                <div class="field">
-                  <div class="field-label">Cooldown Seconds</div>
-                  <input type="number" min="0" bind:value={configDraft.provider_budget.llm.cooldown_seconds} />
-                </div>
-              </div>
-          </PanelCard>
-        </div>
+            </PanelCard>
+          </div>
+        {/if}
 
-        <PanelCard title="高级配置" subtitle="直接编辑 provider_configs JSON。">
+        {#if configMode === 'advanced'}
+          <PanelCard title="完整配置 JSON" subtitle="直接编辑全部配置；保存时会按完整对象提交。">
             <div class="field">
-              <div class="field-label">Provider Configs JSON</div>
-              <textarea bind:value={configDraft.provider_configs_text} spellcheck="false"></textarea>
+              <div class="field-label">Config JSON</div>
+              <textarea bind:value={configDraft.full_config_text} spellcheck="false"></textarea>
             </div>
-        </PanelCard>
+            <div class="field-help">这里是全部配置，不只是 provider_configs。适合直接维护完整配置文件。</div>
+          </PanelCard>
+        {/if}
       </PageShell>
     {/if}
 
