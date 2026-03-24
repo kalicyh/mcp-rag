@@ -23,6 +23,178 @@
     { id: 'system', title: '系统配置' },
     { id: 'advanced', title: '高级配置' },
   ];
+  const providerCatalog = [
+    {
+      id: 'doubao',
+      title: '豆包',
+      vendor: 'Volcengine Ark',
+      description: '火山方舟兼容 OpenAI 风格接口，可同时承载对话和向量能力。',
+      website: 'https://www.volcengine.com/product/ark',
+      defaults: {
+        base_url: 'https://ark.cn-beijing.volces.com/api/v3',
+      },
+      families: ['chat', 'embedding'],
+      models: {
+        chat: [
+          { value: 'doubao-seed-1.6-250615', label: 'Doubao Seed 1.6' },
+          { value: 'doubao-seed-1.6-thinking-250715', label: 'Doubao Seed Thinking' },
+          { value: 'doubao-pro-32k', label: 'Doubao Pro 32K' },
+        ],
+        embedding: [
+          { value: 'doubao-embedding-text-240715', label: 'Doubao Embedding Text' },
+        ],
+      },
+    },
+    {
+      id: 'zhipu',
+      title: '智谱',
+      vendor: 'BigModel',
+      description: '智谱开放平台，支持 GLM 系列对话模型与 embedding 接口。',
+      website: 'https://open.bigmodel.cn',
+      defaults: {
+        base_url: 'https://open.bigmodel.cn/api/paas/v4',
+      },
+      families: ['chat', 'embedding'],
+      models: {
+        chat: [
+          { value: 'glm-4-flash', label: 'GLM-4-Flash' },
+          { value: 'glm-4-air', label: 'GLM-4-Air' },
+          { value: 'glm-4-plus', label: 'GLM-4-Plus' },
+        ],
+        embedding: [
+          { value: 'embedding-3', label: 'Embedding-3' },
+          { value: 'embedding-2', label: 'Embedding-2' },
+        ],
+      },
+    },
+    {
+      id: 'openai',
+      title: 'OpenAI',
+      vendor: 'OpenAI',
+      description: '标准 OpenAI 接口，可配置通用对话与向量模型。',
+      website: 'https://platform.openai.com',
+      defaults: {
+        base_url: 'https://api.openai.com/v1',
+      },
+      families: ['chat', 'embedding'],
+      models: {
+        chat: [
+          { value: 'gpt-4o-mini', label: 'GPT-4o mini' },
+          { value: 'gpt-4.1-mini', label: 'GPT-4.1 mini' },
+          { value: 'gpt-4o', label: 'GPT-4o' },
+        ],
+        embedding: [
+          { value: 'text-embedding-3-small', label: 'Text Embedding 3 Small' },
+          { value: 'text-embedding-3-large', label: 'Text Embedding 3 Large' },
+        ],
+      },
+    },
+    {
+      id: 'deepseek',
+      title: 'DeepSeek',
+      vendor: 'DeepSeek',
+      description: '深度求索对话模型，可通过兼容接口直接接入。',
+      website: 'https://platform.deepseek.com',
+      defaults: {
+        base_url: 'https://api.deepseek.com/v1',
+      },
+      families: ['chat'],
+      models: {
+        chat: [
+          { value: 'deepseek-chat', label: 'DeepSeek Chat' },
+          { value: 'deepseek-reasoner', label: 'DeepSeek Reasoner' },
+        ],
+      },
+    },
+    {
+      id: 'qwen',
+      title: '通义千问',
+      vendor: 'Alibaba Cloud',
+      description: '阿里云百炼模型服务，支持文本生成与向量模型。',
+      website: 'https://bailian.console.aliyun.com',
+      defaults: {
+        base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+      },
+      families: ['chat', 'embedding'],
+      models: {
+        chat: [
+          { value: 'qwen-plus', label: 'Qwen Plus' },
+          { value: 'qwen-turbo', label: 'Qwen Turbo' },
+          { value: 'qwen-max', label: 'Qwen Max' },
+        ],
+        embedding: [
+          { value: 'text-embedding-v4', label: 'Text Embedding V4' },
+          { value: 'text-embedding-v3', label: 'Text Embedding V3' },
+        ],
+      },
+    },
+    {
+      id: 'siliconflow',
+      title: 'SiliconCloud',
+      vendor: 'SiliconFlow',
+      description: '硅基流动聚合平台，支持多家模型的兼容接入。',
+      website: 'https://siliconflow.cn',
+      defaults: {
+        base_url: 'https://api.siliconflow.cn/v1',
+      },
+      families: ['chat', 'embedding'],
+      models: {
+        chat: [
+          { value: 'Qwen/Qwen2.5-7B-Instruct', label: 'Qwen2.5 7B Instruct' },
+          { value: 'deepseek-ai/DeepSeek-V3', label: 'DeepSeek V3' },
+        ],
+        embedding: [
+          { value: 'BAAI/bge-large-zh-v1.5', label: 'BGE Large ZH v1.5' },
+        ],
+      },
+    },
+    {
+      id: 'ollama',
+      title: 'Ollama',
+      vendor: 'Ollama',
+      description: '本地大模型服务，当前主要用于对话模型。',
+      website: 'https://ollama.com',
+      defaults: {
+        base_url: 'http://localhost:11434',
+      },
+      families: ['chat'],
+      models: {
+        chat: [
+          { value: 'qwen2:7b', label: 'Qwen2 7B' },
+          { value: 'llama3.1:8b', label: 'Llama 3.1 8B' },
+          { value: 'deepseek-r1:7b', label: 'DeepSeek R1 7B' },
+        ],
+      },
+    },
+    {
+      id: 'm3e-small',
+      title: '本地 M3E',
+      vendor: 'Local Embedding',
+      description: '本地句向量模型，不依赖远端服务商接口。',
+      defaults: {},
+      families: ['embedding'],
+      local: true,
+      models: {
+        embedding: [{ value: 'm3e-small', label: 'm3e-small' }],
+      },
+    },
+    {
+      id: 'e5-small',
+      title: '本地 E5',
+      vendor: 'Local Embedding',
+      description: '本地轻量向量模型，适合纯离线场景。',
+      defaults: {},
+      families: ['embedding'],
+      local: true,
+      models: {
+        embedding: [{ value: 'e5-small', label: 'e5-small' }],
+      },
+    },
+  ];
+  const modelFamilyMeta = {
+    chat: { title: 'LLM', label: '对话模型' },
+    embedding: { title: 'Embedding', label: '向量模型' },
+  };
   const routeSectionMap = {
     overview: 'overview',
     documents: 'documents',
@@ -204,9 +376,69 @@
       .join('；');
   }
 
+  function providerDefinition(providerId) {
+    return providerCatalog.find((item) => item.id === providerId) || null;
+  }
+
+  function providersForFamily(family) {
+    return providerCatalog.filter((item) => item.families.includes(family));
+  }
+
+  function providerSelectOptions(family) {
+    return providersForFamily(family).map((item) => ({
+      value: item.id,
+      label: item.title,
+    }));
+  }
+
+  function providerModelField(family) {
+    return family === 'chat' ? 'llm_model' : 'embedding_model';
+  }
+
+  function providerConfigValue(providerId, field, fallback = '') {
+    const providerConfigs = parseJsonOr({}, configDraft.provider_configs_text);
+    let value = providerConfigs?.[providerId]?.[field];
+    if ((value === undefined || value === null || value === '') && field === 'embedding_model') {
+      value = providerConfigs?.[providerId]?.model;
+    }
+    if ((value === undefined || value === null || value === '') && field === 'llm_model') {
+      value = providerConfigs?.[providerId]?.llm_model ?? providerConfigs?.[providerId]?.model;
+    }
+    if (value !== undefined && value !== null && value !== '') return value;
+
+    if (providerId === configDraft.llm_provider) {
+      if (field === 'base_url' && configDraft.llm_base_url) return configDraft.llm_base_url;
+      if (field === 'api_key' && configDraft.llm_api_key) return configDraft.llm_api_key;
+      if (field === 'llm_model' && configDraft.llm_model) return configDraft.llm_model;
+    }
+
+    const provider = providerDefinition(providerId);
+    return provider?.defaults?.[field] ?? fallback;
+  }
+
+  function providerModelOptions(providerId, family) {
+    const provider = providerDefinition(providerId);
+    const catalogOptions = provider?.models?.[family] ?? [];
+    const field = providerModelField(family);
+    const currentValue = providerConfigValue(providerId, field, '');
+    if (currentValue && !catalogOptions.some((item) => item.value === currentValue)) {
+      return [...catalogOptions, { value: currentValue, label: `${currentValue} (当前自定义)` }];
+    }
+    return catalogOptions;
+  }
+
+  function providerModelValue(providerId, family) {
+    const field = providerModelField(family);
+    if (family === 'chat' && providerId === configDraft.llm_provider && configDraft.llm_model) {
+      return configDraft.llm_model;
+    }
+    return providerConfigValue(providerId, field, '');
+  }
+
   let activeSection = 'overview';
   let documentMode = 'ingest';
   let configMode = 'provider';
+  let providerEditor = 'doubao';
   let managedPage = 0;
   let managedPageSize = 8;
   let queuedFiles = [];
@@ -392,6 +624,17 @@
     writeState();
   }
 
+  function syncProviderEditor() {
+    const preferred =
+      providerDefinition(configDraft.llm_provider)?.id ||
+      providerDefinition(configDraft.embedding_provider)?.id ||
+      providerCatalog[0]?.id ||
+      'doubao';
+    if (!providerDefinition(providerEditor)) {
+      providerEditor = preferred;
+    }
+  }
+
   function setKnowledgeBase(value) {
     selectedKnowledgeBase = value;
     documentKnowledgeBase = value;
@@ -468,14 +711,55 @@
     draft.provider_configs_text = JSON.stringify(payload.provider_configs ?? {}, null, 2);
     const activeEmbeddingProvider = payload.provider_configs?.[draft.embedding_provider] ?? {};
     draft.embedding_base_url = activeEmbeddingProvider.base_url ?? '';
-    draft.embedding_model = activeEmbeddingProvider.model ?? '';
+    draft.embedding_model = activeEmbeddingProvider.embedding_model ?? activeEmbeddingProvider.model ?? '';
     draft.embedding_api_key = activeEmbeddingProvider.api_key ?? '';
+    const activeLlmProvider = payload.provider_configs?.[draft.llm_provider] ?? {};
+    draft.llm_model = payload.llm_model ?? activeLlmProvider.llm_model ?? activeLlmProvider.model ?? draft.llm_model;
+    draft.llm_base_url = payload.llm_base_url ?? activeLlmProvider.base_url ?? draft.llm_base_url;
+    draft.llm_api_key = payload.llm_api_key ?? activeLlmProvider.api_key ?? draft.llm_api_key;
     draft.full_config_text = JSON.stringify(payload, null, 2);
     configDraft = draft;
+    syncProviderEditor();
   }
 
   function buildConfigPayloadFromDraft() {
     const providerConfigs = parseJsonOr({}, configDraft.provider_configs_text);
+    const llmProviderConfig = providerConfigs[configDraft.llm_provider] || {};
+    const embeddingProviderConfig = providerConfigs[configDraft.embedding_provider] || {};
+    const nextProviderConfigs = {
+      ...providerConfigs,
+    };
+
+    if (configDraft.embedding_provider) {
+      nextProviderConfigs[configDraft.embedding_provider] = {
+        ...(nextProviderConfigs[configDraft.embedding_provider] || {}),
+        ...embeddingProviderConfig,
+        embedding_model:
+          embeddingProviderConfig.embedding_model
+          || embeddingProviderConfig.model
+          || configDraft.embedding_model
+          || '',
+        model:
+          embeddingProviderConfig.embedding_model
+          || embeddingProviderConfig.model
+          || configDraft.embedding_model
+          || '',
+      };
+    }
+
+    if (configDraft.llm_provider) {
+      nextProviderConfigs[configDraft.llm_provider] = {
+        ...(nextProviderConfigs[configDraft.llm_provider] || {}),
+        ...llmProviderConfig,
+        llm_model:
+          configDraft.llm_model
+          || llmProviderConfig.llm_model
+          || llmProviderConfig.model
+          || '',
+        base_url: llmProviderConfig.base_url ?? configDraft.llm_base_url,
+        api_key: llmProviderConfig.api_key ?? configDraft.llm_api_key ?? null,
+      };
+    }
 
     return {
       host: configDraft.host,
@@ -492,9 +776,9 @@
       embedding_cache_dir: configDraft.embedding_cache_dir || null,
       llm_provider: configDraft.llm_provider,
       llm_fallback_provider: configDraft.llm_fallback_provider || null,
-      llm_model: configDraft.llm_model,
-      llm_base_url: configDraft.llm_base_url,
-      llm_api_key: configDraft.llm_api_key || null,
+      llm_model: configDraft.llm_model || llmProviderConfig.llm_model || llmProviderConfig.model || '',
+      llm_base_url: llmProviderConfig.base_url ?? configDraft.llm_base_url,
+      llm_api_key: llmProviderConfig.api_key ?? configDraft.llm_api_key ?? null,
       enable_thinking: Boolean(configDraft.enable_thinking),
       enable_llm_summary: Boolean(configDraft.enable_llm_summary),
       enable_reranker: Boolean(configDraft.enable_reranker),
@@ -548,7 +832,7 @@
           cooldown_seconds: Number(configDraft.provider_budget.llm.cooldown_seconds),
         },
       },
-      provider_configs: providerConfigs,
+      provider_configs: nextProviderConfigs,
     };
   }
 
@@ -573,8 +857,21 @@
     configDraft = {
       ...configDraft,
       embedding_base_url: activeProvider.base_url ?? '',
-      embedding_model: activeProvider.model ?? '',
+      embedding_model: activeProvider.embedding_model ?? activeProvider.model ?? '',
       embedding_api_key: activeProvider.api_key ?? '',
+    };
+  }
+
+  function syncLlmProviderDraft(providerName) {
+    const providerConfigs = parseJsonOr({}, configDraft.provider_configs_text);
+    const activeProvider = providerConfigs?.[providerName] ?? {};
+    const provider = providerDefinition(providerName);
+    const defaultModel = provider?.models?.chat?.[0]?.value ?? '';
+    configDraft = {
+      ...configDraft,
+      llm_base_url: activeProvider.base_url ?? provider?.defaults?.base_url ?? '',
+      llm_api_key: activeProvider.api_key ?? '',
+      llm_model: activeProvider.llm_model ?? activeProvider.model ?? configDraft.llm_model ?? defaultModel,
     };
   }
 
@@ -597,6 +894,53 @@
     if (providerName === configDraft.embedding_provider) {
       syncEmbeddingProviderDraft(providerName);
     }
+    if (providerName === configDraft.llm_provider) {
+      syncLlmProviderDraft(providerName);
+    }
+  }
+
+  function updateProviderModel(providerName, family, value) {
+    const field = providerModelField(family);
+    updateNamedProviderConfig(providerName, field, value);
+    if (family === 'embedding') {
+      updateNamedProviderConfig(providerName, 'model', value);
+      if (providerName === configDraft.embedding_provider) {
+        configDraft = {
+          ...configDraft,
+          embedding_model: value,
+        };
+      }
+      return;
+    }
+
+    if (providerName === configDraft.llm_provider) {
+      configDraft = {
+        ...configDraft,
+        llm_model: value,
+      };
+    }
+  }
+
+  function selectEmbeddingProvider(providerName) {
+    const provider = providerDefinition(providerName);
+    const defaultModel = provider?.models?.embedding?.[0]?.value ?? providerName;
+    configDraft = {
+      ...configDraft,
+      embedding_provider: providerName,
+      embedding_model: providerModelValue(providerName, 'embedding') || defaultModel,
+    };
+    syncEmbeddingProviderDraft(providerName);
+  }
+
+  function selectLlmProvider(providerName) {
+    const provider = providerDefinition(providerName);
+    const defaultModel = provider?.models?.chat?.[0]?.value ?? '';
+    configDraft = {
+      ...configDraft,
+      llm_provider: providerName,
+      llm_model: providerModelValue(providerName, 'chat') || defaultModel,
+    };
+    syncLlmProviderDraft(providerName);
   }
 
   function buildRequestContext() {
@@ -1150,15 +1494,45 @@
       <div class="sidebar-label">导航</div>
       <div class="nav-list">
         {#each sections as section}
-          <button
-            class="nav-item {activeSection === section.id ? 'active' : ''}"
-            on:click={() => switchSection(section.id)}
-          >
-            <span class="nav-title">
-              <strong>{section.title}</strong>
-              <span>{section.subtitle}</span>
-            </span>
-          </button>
+          {#if section.id === 'config'}
+            <div class="nav-group {activeSection === 'config' ? 'active' : ''}">
+              <button
+                class="nav-item {activeSection === 'config' ? 'active' : ''}"
+                on:click={() => switchSection('config')}
+              >
+                <span class="nav-title">
+                  <strong>{section.title}</strong>
+                  <span>{section.subtitle}</span>
+                </span>
+              </button>
+              <div class="nav-sublist">
+                {#each configModes as mode}
+                  <button
+                    class="nav-subitem {activeSection === 'config' && configMode === mode.id ? 'active' : ''}"
+                    on:click={() => {
+                      activeSection = 'config';
+                      switchConfigMode(mode.id);
+                      syncLocation('config');
+                      writeState();
+                      void refreshConfig();
+                    }}
+                  >
+                    {mode.title}
+                  </button>
+                {/each}
+              </div>
+            </div>
+          {:else}
+            <button
+              class="nav-item {activeSection === section.id ? 'active' : ''}"
+              on:click={() => switchSection(section.id)}
+            >
+              <span class="nav-title">
+                <strong>{section.title}</strong>
+                <span>{section.subtitle}</span>
+              </span>
+            </button>
+          {/if}
         {/each}
       </div>
     </div>
@@ -1635,13 +2009,6 @@
       <PageShell title="配置中心" subtitle="按服务商、系统、高级三层管理配置。">
         <svelte:fragment slot="actions">
           <div class="card-actions">
-            <PageTabs
-              items={configModes}
-              value={configMode}
-              ariaLabel="配置模式"
-              compact={true}
-              on:change={(event) => switchConfigMode(event.detail.value)}
-            />
             <button class="button secondary" on:click={reloadConfig} disabled={configBusy}>重新加载</button>
             <button class="button ghost" on:click={resetConfig} disabled={configBusy}>重置默认</button>
             <button class="button primary" on:click={saveConfig} disabled={configBusy}>{configBusy ? '保存中...' : '保存配置'}</button>
@@ -1649,114 +2016,131 @@
         </svelte:fragment>
 
         {#if configMode === 'provider'}
-          <div class="grid-2">
-            <PanelCard title="豆包" subtitle="配置豆包的 LLM 与向量服务参数。">
-              <div class="field-row">
-                <div class="field">
-                  <div class="field-label">LLM Base URL</div>
-                  <input bind:value={configDraft.llm_base_url} placeholder="https://ark.cn-beijing.volces.com/api/v3" />
-                </div>
-                <div class="field">
-                  <div class="field-label">LLM Model</div>
-                  <input bind:value={configDraft.llm_model} placeholder="doubao-seed-1.6-250615" />
-                </div>
-              </div>
-              <div class="field-row mt-14">
-                <div class="field">
-                  <div class="field-label">LLM API Key</div>
-                  <input bind:value={configDraft.llm_api_key} placeholder="可选" />
-                </div>
-                <div class="field">
-                  <div class="field-label">LLM 能力</div>
-                  <div class="field-switch">
-                    <label class="collection-chip"><input type="checkbox" bind:checked={configDraft.enable_thinking} /> 深度思考</label>
-                    <label class="collection-chip"><input type="checkbox" bind:checked={configDraft.enable_llm_summary} /> 检索总结</label>
+          <div class="provider-workspace">
+            <div class="provider-grid">
+              {#each providerCatalog as provider}
+                <button
+                  class="provider-card {providerEditor === provider.id ? 'active' : ''}"
+                  on:click={() => (providerEditor = provider.id)}
+                >
+                  <div class="provider-card__head">
+                    <div>
+                      <strong>{provider.title}</strong>
+                      <div class="muted small">{provider.vendor}</div>
+                    </div>
+                    <div class="provider-badges">
+                      {#each provider.families as family}
+                        <span class="provider-badge">{modelFamilyMeta[family].label}</span>
+                      {/each}
+                    </div>
                   </div>
-                </div>
-              </div>
-              <div class="divider my-18"></div>
-              <div class="field-row">
-                <div class="field">
-                  <div class="field-label">向量 Base URL</div>
-                  <input
-                    value={providerConfigField('doubao', 'base_url', 'https://ark.cn-beijing.volces.com/api/v3')}
-                    placeholder="https://..."
-                    on:input={(event) => updateNamedProviderConfig('doubao', 'base_url', event.currentTarget.value)}
-                  />
-                </div>
-                <div class="field">
-                  <div class="field-label">向量 Model</div>
-                  <input
-                    value={providerConfigField('doubao', 'model', 'doubao-embedding-text-240715')}
-                    placeholder="doubao-embedding-text-240715"
-                    on:input={(event) => updateNamedProviderConfig('doubao', 'model', event.currentTarget.value)}
-                  />
-                </div>
-              </div>
-              <div class="field-row mt-14">
-                <div class="field">
-                  <div class="field-label">向量 API Key</div>
-                  <input
-                    value={providerConfigField('doubao', 'api_key', '')}
-                    placeholder="可选"
-                    on:input={(event) => updateNamedProviderConfig('doubao', 'api_key', event.currentTarget.value)}
-                  />
-                </div>
-                <div class="field">
-                  <div class="field-label">适用范围</div>
-                  <div class="field-help">豆包当前可同时作为 LLM 服务商和向量服务商。</div>
-                </div>
-              </div>
-            </PanelCard>
+                  <div class="provider-card__body">{provider.description}</div>
+                </button>
+              {/each}
+            </div>
 
-            <PanelCard title="智谱" subtitle="配置智谱的向量服务参数。">
-              <div class="field-row">
-                <div class="field">
-                  <div class="field-label">向量 Base URL</div>
-                  <input
-                    value={providerConfigField('zhipu', 'base_url', 'https://open.bigmodel.cn/api/paas/v4')}
-                    placeholder="https://open.bigmodel.cn/api/paas/v4"
-                    on:input={(event) => updateNamedProviderConfig('zhipu', 'base_url', event.currentTarget.value)}
-                  />
-                </div>
-                <div class="field">
-                  <div class="field-label">向量 Model</div>
-                  <input
-                    value={providerConfigField('zhipu', 'model', 'embedding-3')}
-                    placeholder="embedding-3"
-                    on:input={(event) => updateNamedProviderConfig('zhipu', 'model', event.currentTarget.value)}
-                  />
-                </div>
-              </div>
-              <div class="field-row mt-14">
-                <div class="field">
-                  <div class="field-label">向量 API Key</div>
-                  <input
-                    value={providerConfigField('zhipu', 'api_key', '')}
-                    placeholder="可选"
-                    on:input={(event) => updateNamedProviderConfig('zhipu', 'api_key', event.currentTarget.value)}
-                  />
-                </div>
-                <div class="field">
-                  <div class="field-label">适用范围</div>
-                  <div class="field-help">当前后端里智谱主要用于向量服务商；LLM 选择仍在系统设置里按已支持 provider 切换。</div>
-                </div>
-              </div>
-            </PanelCard>
+            {#if providerDefinition(providerEditor)}
+              <div class="grid-2">
+                <PanelCard
+                  title={providerDefinition(providerEditor).title}
+                  subtitle={providerDefinition(providerEditor).description}
+                >
+                  <div class="field-row">
+                    <div class="field">
+                      <div class="field-label">服务商</div>
+                      <div class="field-help">{providerDefinition(providerEditor).vendor}</div>
+                    </div>
+                    <div class="field">
+                      <div class="field-label">官网</div>
+                      <div class="field-help">
+                        {#if providerDefinition(providerEditor).website}
+                          <a href={providerDefinition(providerEditor).website} target="_blank" rel="noreferrer">
+                            {providerDefinition(providerEditor).website}
+                          </a>
+                        {:else}
+                          本地 provider
+                        {/if}
+                      </div>
+                    </div>
+                  </div>
 
-            <PanelCard title="本地模型" subtitle="配置本地向量环境与 Ollama 等本地能力。">
-              <div class="field-row mt-14">
-                <div class="field">
-                  <div class="field-label">Embedding Device</div>
-                  <input bind:value={configDraft.embedding_device} placeholder="cpu / cuda" />
-                </div>
-                <div class="field">
-                  <div class="field-label">Embedding Cache Dir</div>
-                  <input bind:value={configDraft.embedding_cache_dir} placeholder="缓存目录，可选" />
+                  {#if !providerDefinition(providerEditor).local}
+                    <div class="field mt-14">
+                      <div class="field-label">Base URL</div>
+                      <input
+                        value={providerConfigValue(providerEditor, 'base_url', providerDefinition(providerEditor).defaults?.base_url ?? '')}
+                        placeholder={providerDefinition(providerEditor).defaults?.base_url ?? 'https://your-provider/v1'}
+                        on:input={(event) => updateNamedProviderConfig(providerEditor, 'base_url', event.currentTarget.value)}
+                      />
+                    </div>
+                    <div class="field mt-14">
+                      <div class="field-label">API Key</div>
+                      <input
+                        value={providerConfigValue(providerEditor, 'api_key', '')}
+                        placeholder="输入该服务商的 API Key"
+                        on:input={(event) => updateNamedProviderConfig(providerEditor, 'api_key', event.currentTarget.value)}
+                      />
+                    </div>
+                  {:else}
+                    <div class="field-row mt-14">
+                      <div class="field">
+                        <div class="field-label">Embedding Device</div>
+                        <input bind:value={configDraft.embedding_device} placeholder="cpu / cuda" />
+                      </div>
+                      <div class="field">
+                        <div class="field-label">Embedding Cache Dir</div>
+                        <input bind:value={configDraft.embedding_cache_dir} placeholder="缓存目录，可选" />
+                      </div>
+                    </div>
+                  {/if}
+
+                  <div class="field mt-14">
+                    <div class="field-label">系统绑定</div>
+                    <div class="provider-links">
+                      <span class="collection-chip {configDraft.llm_provider === providerEditor ? 'active' : ''}">
+                        LLM: {configDraft.llm_provider === providerEditor ? '当前已选中' : '未选中'}
+                      </span>
+                      <span class="collection-chip {configDraft.embedding_provider === providerEditor ? 'active' : ''}">
+                        Embedding: {configDraft.embedding_provider === providerEditor ? '当前已选中' : '未选中'}
+                      </span>
+                    </div>
+                  </div>
+                </PanelCard>
+
+                <div class="provider-family-stack">
+                  {#each providerDefinition(providerEditor).families as family}
+                    <PanelCard title={modelFamilyMeta[family].label} subtitle={`配置 ${providerDefinition(providerEditor).title} 的${modelFamilyMeta[family].label}默认模型。`}>
+                      <div class="field">
+                        <div class="field-label">预设模型</div>
+                        <SelectField
+                          value={providerModelValue(providerEditor, family)}
+                          options={providerModelOptions(providerEditor, family)}
+                          ariaLabel={`选择 ${providerDefinition(providerEditor).title}${modelFamilyMeta[family].label}`}
+                          on:change={(event) => updateProviderModel(providerEditor, family, event.detail.value)}
+                        />
+                      </div>
+                      <div class="field mt-14">
+                        <div class="field-label">自定义模型 ID</div>
+                        <input
+                          value={providerModelValue(providerEditor, family)}
+                          placeholder="可以直接输入未在预设列表里的模型 ID"
+                          on:input={(event) => updateProviderModel(providerEditor, family, event.currentTarget.value)}
+                        />
+                      </div>
+                      {#if family === 'chat' && providerEditor === 'doubao'}
+                        <div class="field mt-14">
+                          <div class="field-label">LLM 能力</div>
+                          <div class="field-switch">
+                            <label class="collection-chip"><input type="checkbox" bind:checked={configDraft.enable_thinking} /> 深度思考</label>
+                            <label class="collection-chip"><input type="checkbox" bind:checked={configDraft.enable_llm_summary} /> 检索总结</label>
+                          </div>
+                        </div>
+                      {/if}
+                    </PanelCard>
+                  {/each}
                 </div>
               </div>
-              <div class="field-help">如果系统设置里选择本地 provider，例如 `ollama` 或本地 embedding provider，这里的本地环境参数会生效。</div>
-            </PanelCard>
+            {/if}
           </div>
         {/if}
 
@@ -1804,25 +2188,59 @@
               <div class="field-row">
                 <div class="field">
                   <div class="field-label">向量服务商</div>
-                  <input
-                    bind:value={configDraft.embedding_provider}
-                    placeholder="zhipu / doubao / m3e-small / e5-small"
-                    on:change={() => syncEmbeddingProviderDraft(configDraft.embedding_provider)}
+                  <SelectField
+                    value={configDraft.embedding_provider}
+                    options={providerSelectOptions('embedding')}
+                    ariaLabel="选择向量服务商"
+                    on:change={(event) => selectEmbeddingProvider(event.detail.value)}
                   />
                 </div>
                 <div class="field">
                   <div class="field-label">向量服务商回退</div>
-                  <input bind:value={configDraft.embedding_fallback_provider} placeholder="可选" />
+                  <SelectField
+                    bind:value={configDraft.embedding_fallback_provider}
+                    options={[{ value: '', label: '不启用回退' }, ...providerSelectOptions('embedding')]}
+                    ariaLabel="选择向量服务商回退"
+                  />
                 </div>
               </div>
               <div class="field-row">
                 <div class="field">
+                  <div class="field-label">向量模型</div>
+                  <SelectField
+                    value={providerModelValue(configDraft.embedding_provider, 'embedding')}
+                    options={providerModelOptions(configDraft.embedding_provider, 'embedding')}
+                    ariaLabel="选择向量模型"
+                    on:change={(event) => updateProviderModel(configDraft.embedding_provider, 'embedding', event.detail.value)}
+                  />
+                </div>
+                <div class="field">
                   <div class="field-label">LLM 服务商</div>
-                  <input bind:value={configDraft.llm_provider} placeholder="doubao / ollama" />
+                  <SelectField
+                    value={configDraft.llm_provider}
+                    options={providerSelectOptions('chat')}
+                    ariaLabel="选择 LLM 服务商"
+                    on:change={(event) => selectLlmProvider(event.detail.value)}
+                  />
+                </div>
+              </div>
+              <div class="field-row">
+                <div class="field">
+                  <div class="field-label">LLM 模型</div>
+                  <SelectField
+                    value={configDraft.llm_model}
+                    options={providerModelOptions(configDraft.llm_provider, 'chat')}
+                    ariaLabel="选择 LLM 模型"
+                    on:change={(event) => updateProviderModel(configDraft.llm_provider, 'chat', event.detail.value)}
+                  />
                 </div>
                 <div class="field">
                   <div class="field-label">LLM 服务商回退</div>
-                  <input bind:value={configDraft.llm_fallback_provider} placeholder="可选" />
+                  <SelectField
+                    bind:value={configDraft.llm_fallback_provider}
+                    options={[{ value: '', label: '不启用回退' }, ...providerSelectOptions('chat')]}
+                    ariaLabel="选择 LLM 服务商回退"
+                  />
                 </div>
               </div>
               <div class="field-row mt-14">

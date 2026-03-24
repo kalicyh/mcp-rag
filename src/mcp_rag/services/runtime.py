@@ -322,7 +322,12 @@ class ServiceRuntime:
         return IndexingSettings(
             persist_directory=self.settings.chroma_persist_directory,
             embedding_provider=provider,
-            embedding_model=getattr(provider_config, "model", provider or "m3e-small"),
+            embedding_model=(
+                getattr(provider_config, "embedding_model", None)
+                or getattr(provider_config, "model", None)
+                or provider
+                or "m3e-small"
+            ),
             embedding_base_url=getattr(provider_config, "base_url", None),
             embedding_api_key=getattr(provider_config, "api_key", None),
             embedding_device=self.settings.embedding_device,
@@ -471,20 +476,23 @@ class ServiceRuntime:
         )
 
     def _llm_signature(self) -> tuple[Any, ...]:
+        provider_config = self._provider_config(self._llm_provider_name())
         return (
             self._llm_provider_name(),
-            getattr(self.settings, "llm_model", ""),
-            getattr(self.settings, "llm_base_url", ""),
-            getattr(self.settings, "llm_api_key", None),
+            getattr(provider_config, "llm_model", None) or getattr(provider_config, "model", None) or getattr(self.settings, "llm_model", ""),
+            getattr(provider_config, "base_url", None) or getattr(self.settings, "llm_base_url", ""),
+            getattr(provider_config, "api_key", None) or getattr(self.settings, "llm_api_key", None),
             bool(getattr(self.settings, "enable_thinking", True)),
         )
 
     def _llm_fallback_signature(self) -> tuple[Any, ...]:
+        fallback_provider = str(getattr(self.settings, "llm_fallback_provider", "") or "").strip().lower()
+        provider_config = self._provider_config(fallback_provider)
         return (
-            str(getattr(self.settings, "llm_fallback_provider", "") or "").strip().lower(),
-            getattr(self.settings, "llm_model", ""),
-            getattr(self.settings, "llm_base_url", ""),
-            getattr(self.settings, "llm_api_key", None),
+            fallback_provider,
+            getattr(provider_config, "llm_model", None) or getattr(provider_config, "model", None) or getattr(self.settings, "llm_model", ""),
+            getattr(provider_config, "base_url", None) or getattr(self.settings, "llm_base_url", ""),
+            getattr(provider_config, "api_key", None) or getattr(self.settings, "llm_api_key", None),
         )
 
     def _cache_signature(self) -> tuple[Any, ...]:
@@ -729,21 +737,47 @@ class ServiceRuntime:
 
     async def _build_fallback_llm_model(self, fallback_provider: str) -> Any | None:
         try:
+            provider_config = self._provider_config(fallback_provider)
+            model_name = str(
+                getattr(provider_config, "llm_model", None)
+                or getattr(provider_config, "model", None)
+                or getattr(self.settings, "llm_model", "")
+                or ""
+            )
+            base_url = str(
+                getattr(provider_config, "base_url", None)
+                or getattr(self.settings, "llm_base_url", "https://ark.cn-beijing.volces.com/api/v3")
+                or ""
+            )
+            api_key = getattr(provider_config, "api_key", None) or getattr(self.settings, "llm_api_key", None)
+
             if fallback_provider == "ollama":
                 return OllamaModel(
-                    base_url="http://localhost:11434",
-                    model=str(getattr(self.settings, "llm_model", "") or "qwen2:7b"),
+                    base_url=base_url or "http://localhost:11434",
+                    model=model_name or "qwen2:7b",
                 )
 
             if fallback_provider == "doubao":
-                api_key = getattr(self.settings, "llm_api_key", None)
                 if not api_key:
                     return None
                 llm_model = DoubaoLLMModel(
                     api_key=api_key,
-                    base_url=str(getattr(self.settings, "llm_base_url", "https://ark.cn-beijing.volces.com/api/v3")),
-                    model=str(getattr(self.settings, "llm_model", "")),
+                    base_url=base_url,
+                    model=model_name,
                     enable_thinking=bool(getattr(self.settings, "enable_thinking", True)),
+                )
+                await llm_model.initialize()
+                return llm_model
+
+            if provider_config is not None:
+                from ..llm import OpenAICompatibleLLMModel
+
+                if not api_key:
+                    return None
+                llm_model = OpenAICompatibleLLMModel(
+                    api_key=api_key,
+                    base_url=base_url,
+                    model=model_name,
                 )
                 await llm_model.initialize()
                 return llm_model
@@ -793,6 +827,8 @@ class ServiceRuntime:
 
     def _llm_readiness(self) -> dict[str, Any]:
         provider = self._llm_provider_name()
+        provider_config = self._provider_config(provider)
+        llm_api_key = getattr(provider_config, "api_key", None) or getattr(self.settings, "llm_api_key", None)
         if not bool(getattr(self.settings, "enable_llm_summary", False)):
             return {
                 "ready": True,
@@ -807,14 +843,14 @@ class ServiceRuntime:
                 "provider": provider,
             }
 
-        if provider == "doubao" and not getattr(self.settings, "llm_api_key", None):
+        if provider != "ollama" and not llm_api_key:
             return {
                 "ready": False,
                 "status": "misconfigured",
                 "provider": provider,
                 "reason": "llm api_key is missing",
             }
-        if provider not in {"doubao", "ollama"}:
+        if provider not in {"doubao", "ollama"} and provider_config is None:
             return {
                 "ready": False,
                 "status": "misconfigured",

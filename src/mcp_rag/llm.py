@@ -159,15 +159,103 @@ class DoubaoLLMModel(LLMModel):
             await self.client.aclose()
 
 
+class OpenAICompatibleLLMModel(LLMModel):
+    """Generic OpenAI-compatible LLM model."""
+
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        base_url: str = "https://api.openai.com/v1",
+        model: str = "gpt-4o-mini",
+    ):
+        if not HTTPX_AVAILABLE:
+            raise RuntimeError("httpx not available. Please install it with: pip install httpx")
+
+        self.api_key = api_key
+        self.base_url = base_url.rstrip("/")
+        self.model = model
+        self.client: Optional[httpx.AsyncClient] = None
+
+    async def initialize(self) -> None:
+        if not self.api_key:
+            raise ValueError("API key is required for OpenAI-compatible LLM providers.")
+
+        self.client = httpx.AsyncClient(
+            base_url=self.base_url,
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            },
+            timeout=60.0,
+        )
+        logger.info("Initialized OpenAI-compatible LLM model %s at %s", self.model, self.base_url)
+
+    async def generate(self, prompt: str, **kwargs) -> str:
+        if not self.client:
+            raise RuntimeError("Client not initialized")
+
+        response = await self.client.post(
+            "/chat/completions",
+            json={
+                "model": self.model,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": prompt,
+                    }
+                ],
+                **kwargs,
+            },
+        )
+
+        if response.status_code != 200:
+            raise RuntimeError(f"LLM API error: {response.status_code} - {response.text}")
+
+        data = response.json()
+        return data["choices"][0]["message"]["content"]
+
+    async def summarize(self, content: str, query: str) -> str:
+        prompt = f"""基于以下查询：{query}
+
+请总结以下内容的相关信息：
+
+{content}
+
+请提供简洁准确的总结："""
+        return await self.generate(prompt)
+
+    async def close(self) -> None:
+        if self.client:
+            await self.client.aclose()
+
+
+def _provider_llm_config(settings_obj: Any, provider: str) -> tuple[str, str, Optional[str]]:
+    provider_name = str(provider or "").strip().lower()
+    provider_configs = getattr(settings_obj, "provider_configs", {}) or {}
+    provider_config = provider_configs.get(provider_name)
+
+    model = str(
+        getattr(provider_config, "llm_model", None)
+        or getattr(provider_config, "model", None)
+        or getattr(settings_obj, "llm_model", "")
+        or ""
+    )
+    base_url = str(
+        getattr(provider_config, "base_url", None)
+        or getattr(settings_obj, "llm_base_url", "https://ark.cn-beijing.volces.com/api/v3")
+        or ""
+    )
+    api_key = getattr(provider_config, "api_key", None) or getattr(settings_obj, "llm_api_key", None)
+    return model, base_url, api_key
+
+
 async def get_llm_model(settings_obj: Any) -> LLMModel:
     """Build an LLM model for the provided settings."""
 
     provider = str(getattr(settings_obj, "llm_provider", "doubao") or "doubao").lower()
-    model_name = str(getattr(settings_obj, "llm_model", ""))
-    base_url = str(getattr(settings_obj, "llm_base_url", "https://ark.cn-beijing.volces.com/api/v3"))
+    model_name, base_url, api_key = _provider_llm_config(settings_obj, provider)
 
     if provider == "doubao":
-        api_key = getattr(settings_obj, "llm_api_key", None)
         if not api_key:
             raise ValueError("Doubao API key is required for LLM. Please configure it in the web interface.")
         llm_model = DoubaoLLMModel(
@@ -184,5 +272,15 @@ async def get_llm_model(settings_obj: Any) -> LLMModel:
             base_url=base_url,
             model=model_name,
         )
+
+    provider_configs = getattr(settings_obj, "provider_configs", {}) or {}
+    if provider in provider_configs:
+        llm_model = OpenAICompatibleLLMModel(
+            api_key=api_key,
+            base_url=base_url,
+            model=model_name,
+        )
+        await llm_model.initialize()
+        return llm_model
 
     raise ValueError(f"Unsupported LLM provider: {provider}")

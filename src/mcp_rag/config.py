@@ -14,8 +14,10 @@ from pydantic import BaseModel, Field
 class ProviderConfig(BaseModel):
     """Configuration for a specific model provider."""
 
-    base_url: str
-    model: str
+    base_url: str = ""
+    model: str = ""
+    llm_model: Optional[str] = None
+    embedding_model: Optional[str] = None
     api_key: Optional[str] = None
 
 
@@ -114,11 +116,15 @@ class Settings(BaseModel):
             "doubao": ProviderConfig(
                 base_url="https://ark.cn-beijing.volces.com/api/v3",
                 model="doubao-embedding-text-240715",
+                llm_model="doubao-seed-1.6-250615",
+                embedding_model="doubao-embedding-text-240715",
                 api_key=None
             ),
             "zhipu": ProviderConfig(
                 base_url="https://open.bigmodel.cn/api/paas/v4",
                 model="embedding-3",
+                llm_model="glm-4-flash",
+                embedding_model="embedding-3",
                 api_key=None
             )
         },
