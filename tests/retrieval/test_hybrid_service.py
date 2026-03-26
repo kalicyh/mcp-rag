@@ -25,6 +25,14 @@ class _FakeEmbeddingModel:
         return [0.0, 1.0]
 
 
+class _LegacyEmbeddingModel:
+    async def encode_single(self, text: str):
+        text = text.lower()
+        if "legacy" in text or "history" in text:
+            return [0.0, 1.0]
+        return [1.0, 0.0]
+
+
 class _FakeVectorStore:
     def __init__(self, documents_by_collection: dict[str, list[_Doc]]):
         self.documents_by_collection = documents_by_collection
@@ -80,6 +88,70 @@ class _FakeVectorStore:
         if left_norm == 0 or right_norm == 0:
             return 0.0
         return dot / (left_norm * right_norm)
+
+
+class _FakeVersionedVectorStore(_FakeVectorStore):
+    def __init__(self, documents_by_collection: dict[str, list[_Doc]], variants_by_collection: dict[str, list[dict]]):
+        super().__init__(documents_by_collection)
+        self.variants_by_collection = variants_by_collection
+
+    async def list_collection_variants(self, *, collection_name: str = "default", tenant=None):
+        return list(self.variants_by_collection.get(self._actual(collection_name, tenant), []))
+
+    async def search(
+        self,
+        *,
+        query_embedding,
+        collection_name: str = "default",
+        limit: int = 5,
+        threshold: float = 0.7,
+        tenant=None,
+        actual_collection_name: str | None = None,
+    ):
+        actual = actual_collection_name or self._actual(collection_name, tenant)
+        self.search_calls.append((collection_name, actual, limit, threshold))
+        docs = self.documents_by_collection.get(actual, [])
+        hits = []
+        for doc in docs:
+            score = self._cosine(query_embedding, doc.embedding)
+            if score >= threshold:
+                hits.append(
+                    SearchHit(
+                        chunk_id=doc.id,
+                        document_id=str(doc.metadata.get("document_id", "")),
+                        score=score,
+                        source=str(doc.metadata.get("source", "")),
+                        filename=str(doc.metadata.get("filename", "")),
+                        content=doc.content,
+                        metadata=dict(doc.metadata),
+                    )
+                )
+        hits.sort(key=lambda item: item.score, reverse=True)
+        return hits[:limit]
+
+
+class _DimensionMismatchVersionedVectorStore(_FakeVersionedVectorStore):
+    async def search(
+        self,
+        *,
+        query_embedding,
+        collection_name: str = "default",
+        limit: int = 5,
+        threshold: float = 0.7,
+        tenant=None,
+        actual_collection_name: str | None = None,
+    ):
+        actual = actual_collection_name or self._actual(collection_name, tenant)
+        if actual == "u1_docs":
+            raise RuntimeError("Collection expecting embedding with dimension of 2048, got 1024")
+        return await super().search(
+            query_embedding=query_embedding,
+            collection_name=collection_name,
+            limit=limit,
+            threshold=threshold,
+            tenant=tenant,
+            actual_collection_name=actual_collection_name,
+        )
 
 
 class _RecordingClassifier:
@@ -166,6 +238,80 @@ class HybridRetrievalServiceTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(left[0].chunk_id, "c1")
         self.assertEqual(right, [])
+
+    async def test_versioned_retrieval_queries_all_collection_variants(self) -> None:
+        async def legacy_factory(_variant):
+            return _LegacyEmbeddingModel()
+
+        store = _FakeVersionedVectorStore(
+            {
+                "u1_docs__emb_new": [
+                    _Doc("c-new", "FastAPI current guide", {"source": "new.md", "filename": "new.md", "document_id": "doc-new"}, [1.0, 0.0]),
+                ],
+                "u1_docs__emb_legacy": [
+                    _Doc("c-old", "Legacy history notes", {"source": "old.md", "filename": "old.md", "document_id": "doc-old"}, [0.0, 1.0]),
+                ],
+            },
+            {
+                "u1_docs": [
+                    {"name": "u1_docs__emb_new", "current": True},
+                    {"name": "u1_docs__emb_legacy", "current": False, "embedding_provider": "aliyun", "embedding_model": "legacy-model"},
+                ]
+            },
+        )
+        service = HybridRetrievalService(
+            vector_store=store,
+            embedding_model=_FakeEmbeddingModel(),
+            embedding_model_factory=legacy_factory,
+            classifier=_RecordingClassifier(),
+            candidate_pool_size=4,
+        )
+
+        results = await service.retrieve(
+            "legacy history",
+            collection_name="docs",
+            tenant=TenantContext(base_collection="docs", user_id=1),
+            limit=3,
+            threshold=0.0,
+        )
+
+        self.assertEqual(results[0].chunk_id, "c-old")
+        self.assertEqual({call[1] for call in store.search_calls}, {"u1_docs__emb_new", "u1_docs__emb_legacy"})
+
+    async def test_dimension_mismatch_variant_is_skipped(self) -> None:
+        async def legacy_factory(_variant):
+            return _LegacyEmbeddingModel()
+
+        store = _DimensionMismatchVersionedVectorStore(
+            {
+                "u1_docs__emb_new": [
+                    _Doc("c-new", "FastAPI current guide", {"source": "new.md", "filename": "new.md", "document_id": "doc-new"}, [1.0, 0.0]),
+                ]
+            },
+            {
+                "u1_docs": [
+                    {"name": "u1_docs", "current": False, "embedding_provider": "aliyun", "embedding_model": "legacy-broken"},
+                    {"name": "u1_docs__emb_new", "current": True},
+                ]
+            },
+        )
+        service = HybridRetrievalService(
+            vector_store=store,
+            embedding_model=_FakeEmbeddingModel(),
+            embedding_model_factory=legacy_factory,
+            classifier=_RecordingClassifier(),
+            candidate_pool_size=3,
+        )
+
+        results = await service.retrieve(
+            "FastAPI",
+            collection_name="docs",
+            tenant=TenantContext(base_collection="docs", user_id=1),
+            limit=3,
+            threshold=0.0,
+        )
+
+        self.assertEqual([item.chunk_id for item in results], ["c-new"])
 
 
 if __name__ == "__main__":

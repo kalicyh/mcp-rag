@@ -4,6 +4,8 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Any, Optional
 
+from .config import canonical_provider_name
+
 logger = logging.getLogger(__name__)
 
 try:
@@ -230,7 +232,7 @@ class OpenAICompatibleLLMModel(LLMModel):
 
 
 def _provider_llm_config(settings_obj: Any, provider: str) -> tuple[str, str, Optional[str]]:
-    provider_name = str(provider or "").strip().lower()
+    provider_name = canonical_provider_name(provider)
     provider_configs = getattr(settings_obj, "provider_configs", {}) or {}
     provider_config = provider_configs.get(provider_name)
 
@@ -252,7 +254,7 @@ def _provider_llm_config(settings_obj: Any, provider: str) -> tuple[str, str, Op
 async def get_llm_model(settings_obj: Any) -> LLMModel:
     """Build an LLM model for the provided settings."""
 
-    provider = str(getattr(settings_obj, "llm_provider", "doubao") or "doubao").lower()
+    provider = canonical_provider_name(getattr(settings_obj, "llm_provider", "doubao") or "doubao")
     model_name, base_url, api_key = _provider_llm_config(settings_obj, provider)
 
     if provider == "doubao":

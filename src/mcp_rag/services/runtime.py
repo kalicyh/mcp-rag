@@ -10,7 +10,7 @@ from threading import Lock
 from time import monotonic
 from typing import Any
 
-from ..config import settings
+from ..config import canonical_provider_name, settings
 from ..core.indexing import (
     ChromaVectorStore,
     DocumentProcessor,
@@ -148,6 +148,7 @@ class ServiceRuntime:
         self._llm_model = llm_model
         self._fallback_embedding_model: Any | None = None
         self._fallback_llm_model: Any | None = None
+        self._versioned_embedding_models: dict[str, Any] = {}
         self._retrieval_cache: RetrievalCache | None = None
 
         self._document_ready = document_processor is not None
@@ -237,6 +238,7 @@ class ServiceRuntime:
                         self._hybrid_service = HybridRetrievalService(
                             vector_store=vector_store,
                             embedding_model=embedding_model,
+                            embedding_model_factory=self.ensure_embedding_model_for_variant,
                             rerank_enabled=bool(self.settings.enable_reranker),
                             candidate_pool_size=max(10, int(self.settings.max_retrieval_results)),
                         )
@@ -284,6 +286,9 @@ class ServiceRuntime:
                 await self._close_component(self._fallback_embedding_model)
                 self._embedding_model = None
                 self._fallback_embedding_model = None
+                for model in self._versioned_embedding_models.values():
+                    await self._close_component(model)
+                self._versioned_embedding_models = {}
                 self._embedding_ready = False
                 self._vector_store = None
                 self._vector_ready = False
@@ -335,13 +340,14 @@ class ServiceRuntime:
         )
 
     def build_embedding_model(self, provider: str | None = None):
-        provider_name = str(provider or self._embedding_provider_name() or "").lower()
+        provider_name = canonical_provider_name(provider or self._embedding_provider_name() or "")
         provider_config = self._provider_config(provider_name)
         if provider_config is not None:
             return OpenAICompatibleEmbeddingModel(
                 api_key=provider_config.api_key,
                 base_url=provider_config.base_url,
                 model=provider_config.model,
+                provider_name=provider_name,
             )
 
         return SentenceTransformerEmbeddingModel(
@@ -349,6 +355,44 @@ class ServiceRuntime:
             device=self.settings.embedding_device,
             cache_dir=self.settings.embedding_cache_dir,
         )
+
+    async def ensure_embedding_model_for_variant(self, variant: dict[str, Any]):
+        variant_name = str(variant.get("name") or "")
+        if not variant_name:
+            raise ValueError("Variant name is required")
+        model = self._versioned_embedding_models.get(variant_name)
+        if model is None:
+            provider_name = canonical_provider_name(str(variant.get("embedding_provider") or "") or self._embedding_provider_name())
+            provider_config = self._provider_config(provider_name)
+            model_name = str(
+                variant.get("embedding_model")
+                or getattr(provider_config, "embedding_model", None)
+                or getattr(provider_config, "model", None)
+                or provider_name
+                or "m3e-small"
+            )
+            base_url = variant.get("embedding_base_url") or getattr(provider_config, "base_url", None)
+            api_key = getattr(provider_config, "api_key", None)
+            dimensions = variant.get("embedding_dimensions")
+            if provider_config is not None or base_url:
+                model = OpenAICompatibleEmbeddingModel(
+                    api_key=api_key,
+                    base_url=base_url,
+                    model=model_name,
+                    provider_name=provider_name,
+                    dimensions=int(dimensions) if dimensions not in (None, "", 0) else None,
+                )
+            else:
+                model = SentenceTransformerEmbeddingModel(
+                    model_name=model_name,
+                    device=self.settings.embedding_device,
+                    cache_dir=self.settings.embedding_cache_dir,
+                )
+            initializer = getattr(model, "initialize", None)
+            if callable(initializer):
+                await initializer()
+            self._versioned_embedding_models[variant_name] = model
+        return model
 
     async def refresh_keywords(self, collection: str, tenant: CoreTenantContext) -> None:
         if self._hybrid_service is None:
@@ -552,15 +596,15 @@ class ServiceRuntime:
         await self._close_component(self._fallback_embedding_model)
 
     def _provider_config(self, provider: str | None):
-        provider_name = str(provider or "").strip().lower()
+        provider_name = canonical_provider_name(provider)
         provider_configs = getattr(self.settings, "provider_configs", {}) or {}
         return provider_configs.get(provider_name)
 
     def _embedding_provider_name(self) -> str:
-        return str(getattr(self.settings, "embedding_provider", "") or "zhipu").strip().lower()
+        return canonical_provider_name(getattr(self.settings, "embedding_provider", "") or "zhipu")
 
     def _llm_provider_name(self) -> str:
-        return str(getattr(self.settings, "llm_provider", "") or "doubao").strip().lower()
+        return canonical_provider_name(getattr(self.settings, "llm_provider", "") or "doubao")
 
     def _budget_embedding_model(self, model: Any):
         if isinstance(model, _BudgetedEmbeddingModel):

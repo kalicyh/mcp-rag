@@ -96,5 +96,92 @@ class ConfigManagerTests(unittest.TestCase):
             self.assertIsNotNone(reloaded)
             self.assertEqual(manager.settings.http_port, 9901)
 
+    def test_legacy_qwen_provider_is_normalized_to_aliyun(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "embedding_provider": "qwen",
+                        "llm_provider": "qwen",
+                        "provider_configs": {
+                            "qwen": {
+                                "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                                "model": "text-embedding-v4",
+                                "llm_model": "qwen-plus",
+                                "embedding_model": "text-embedding-v4",
+                                "api_key": "test-key",
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            manager = ConfigManager(config_file=str(config_path))
+
+            settings = manager.settings
+
+            self.assertEqual(settings.embedding_provider, "aliyun")
+            self.assertEqual(settings.llm_provider, "aliyun")
+            self.assertIn("aliyun", settings.provider_configs)
+            self.assertNotIn("qwen", settings.provider_configs)
+            self.assertEqual(settings.provider_configs["aliyun"].llm_model, "qwen-plus")
+
+    def test_missing_new_builtin_provider_is_merged_into_existing_provider_configs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "provider_configs": {
+                            "doubao": {
+                                "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+                                "model": "doubao-embedding-text-240715",
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            manager = ConfigManager(config_file=str(config_path))
+
+            settings = manager.settings
+
+            self.assertIn("doubao", settings.provider_configs)
+            self.assertIn("aliyun", settings.provider_configs)
+            self.assertEqual(
+                settings.provider_configs["aliyun"].base_url,
+                "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            )
+
+    def test_empty_builtin_provider_fields_fall_back_to_defaults(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "provider_configs": {
+                            "aliyun": {
+                                "base_url": "",
+                                "model": "",
+                                "llm_model": "",
+                                "embedding_model": "",
+                                "api_key": "sk-test",
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            manager = ConfigManager(config_file=str(config_path))
+
+            aliyun = manager.settings.provider_configs["aliyun"]
+
+            self.assertEqual(aliyun.base_url, "https://dashscope.aliyuncs.com/compatible-mode/v1")
+            self.assertEqual(aliyun.model, "")
+            self.assertIsNone(aliyun.llm_model)
+            self.assertIsNone(aliyun.embedding_model)
+            self.assertEqual(aliyun.api_key, "sk-test")
+
 if __name__ == "__main__":
     unittest.main()

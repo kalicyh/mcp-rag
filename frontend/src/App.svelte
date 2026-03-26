@@ -2,7 +2,6 @@
   import { onMount } from 'svelte';
   import { api } from './lib/api.js';
   import PageShell from './lib/components/PageShell.svelte';
-  import PageTabs from './lib/components/PageTabs.svelte';
   import PanelCard from './lib/components/PanelCard.svelte';
   import SelectField from './lib/components/SelectField.svelte';
 
@@ -35,14 +34,8 @@
       },
       families: ['chat', 'embedding'],
       models: {
-        chat: [
-          { value: 'doubao-seed-1.6-250615', label: 'Doubao Seed 1.6' },
-          { value: 'doubao-seed-1.6-thinking-250715', label: 'Doubao Seed Thinking' },
-          { value: 'doubao-pro-32k', label: 'Doubao Pro 32K' },
-        ],
-        embedding: [
-          { value: 'doubao-embedding-text-240715', label: 'Doubao Embedding Text' },
-        ],
+        chat: [],
+        embedding: [],
       },
     },
     {
@@ -56,15 +49,8 @@
       },
       families: ['chat', 'embedding'],
       models: {
-        chat: [
-          { value: 'glm-4-flash', label: 'GLM-4-Flash' },
-          { value: 'glm-4-air', label: 'GLM-4-Air' },
-          { value: 'glm-4-plus', label: 'GLM-4-Plus' },
-        ],
-        embedding: [
-          { value: 'embedding-3', label: 'Embedding-3' },
-          { value: 'embedding-2', label: 'Embedding-2' },
-        ],
+        chat: [],
+        embedding: [],
       },
     },
     {
@@ -78,15 +64,8 @@
       },
       families: ['chat', 'embedding'],
       models: {
-        chat: [
-          { value: 'gpt-4o-mini', label: 'GPT-4o mini' },
-          { value: 'gpt-4.1-mini', label: 'GPT-4.1 mini' },
-          { value: 'gpt-4o', label: 'GPT-4o' },
-        ],
-        embedding: [
-          { value: 'text-embedding-3-small', label: 'Text Embedding 3 Small' },
-          { value: 'text-embedding-3-large', label: 'Text Embedding 3 Large' },
-        ],
+        chat: [],
+        embedding: [],
       },
     },
     {
@@ -100,32 +79,22 @@
       },
       families: ['chat'],
       models: {
-        chat: [
-          { value: 'deepseek-chat', label: 'DeepSeek Chat' },
-          { value: 'deepseek-reasoner', label: 'DeepSeek Reasoner' },
-        ],
+        chat: [],
       },
     },
     {
-      id: 'qwen',
-      title: '通义千问',
-      vendor: 'Alibaba Cloud',
-      description: '阿里云百炼模型服务，支持文本生成与向量模型。',
+      id: 'aliyun',
+      title: '阿里云百炼',
+      vendor: 'Alibaba Cloud Bailian',
+      description: '阿里云百炼提供 OpenAI 兼容接口，可统一接入千问对话与向量模型。',
       website: 'https://bailian.console.aliyun.com',
       defaults: {
         base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
       },
       families: ['chat', 'embedding'],
       models: {
-        chat: [
-          { value: 'qwen-plus', label: 'Qwen Plus' },
-          { value: 'qwen-turbo', label: 'Qwen Turbo' },
-          { value: 'qwen-max', label: 'Qwen Max' },
-        ],
-        embedding: [
-          { value: 'text-embedding-v4', label: 'Text Embedding V4' },
-          { value: 'text-embedding-v3', label: 'Text Embedding V3' },
-        ],
+        chat: [],
+        embedding: [],
       },
     },
     {
@@ -139,13 +108,8 @@
       },
       families: ['chat', 'embedding'],
       models: {
-        chat: [
-          { value: 'Qwen/Qwen2.5-7B-Instruct', label: 'Qwen2.5 7B Instruct' },
-          { value: 'deepseek-ai/DeepSeek-V3', label: 'DeepSeek V3' },
-        ],
-        embedding: [
-          { value: 'BAAI/bge-large-zh-v1.5', label: 'BGE Large ZH v1.5' },
-        ],
+        chat: [],
+        embedding: [],
       },
     },
     {
@@ -159,11 +123,7 @@
       },
       families: ['chat'],
       models: {
-        chat: [
-          { value: 'qwen2:7b', label: 'Qwen2 7B' },
-          { value: 'llama3.1:8b', label: 'Llama 3.1 8B' },
-          { value: 'deepseek-r1:7b', label: 'DeepSeek R1 7B' },
-        ],
+        chat: [],
       },
     },
     {
@@ -194,6 +154,10 @@
   const modelFamilyMeta = {
     chat: { title: 'LLM', label: '对话模型' },
     embedding: { title: 'Embedding', label: '向量模型' },
+  };
+  const providerAliases = {
+    qwen: 'aliyun',
+    dashscope: 'aliyun',
   };
   const routeSectionMap = {
     overview: 'overview',
@@ -365,6 +329,32 @@
     return value === null || value === undefined || value === '' ? fallback : String(value);
   }
 
+  function canonicalProviderId(providerId) {
+    const normalized = String(providerId || '').trim().toLowerCase();
+    return providerAliases[normalized] || normalized;
+  }
+
+  function normalizeProviderConfigs(providerConfigs = {}) {
+    const normalizedConfigs = {};
+    for (const [providerId, config] of Object.entries(providerConfigs || {})) {
+      normalizedConfigs[canonicalProviderId(providerId)] = config;
+    }
+    return normalizedConfigs;
+  }
+
+  function normalizeConfigPayload(payload) {
+    if (!payload) return payload;
+    const normalizedProviderConfigs = normalizeProviderConfigs(payload.provider_configs || {});
+    return {
+      ...payload,
+      embedding_provider: canonicalProviderId(payload.embedding_provider),
+      embedding_fallback_provider: canonicalProviderId(payload.embedding_fallback_provider),
+      llm_provider: canonicalProviderId(payload.llm_provider),
+      llm_fallback_provider: canonicalProviderId(payload.llm_fallback_provider),
+      provider_configs: normalizedProviderConfigs,
+    };
+  }
+
   function summarizeUploadFailures(payload) {
     const failedItems = Array.isArray(payload?.results)
       ? payload.results.filter((item) => !item?.processed)
@@ -377,7 +367,8 @@
   }
 
   function providerDefinition(providerId) {
-    return providerCatalog.find((item) => item.id === providerId) || null;
+    const canonicalId = canonicalProviderId(providerId);
+    return providerCatalog.find((item) => item.id === canonicalId) || null;
   }
 
   function providersForFamily(family) {
@@ -396,17 +387,18 @@
   }
 
   function providerConfigValue(providerId, field, fallback = '') {
-    const providerConfigs = parseJsonOr({}, configDraft.provider_configs_text);
-    let value = providerConfigs?.[providerId]?.[field];
+    const canonicalId = canonicalProviderId(providerId);
+    const providerConfigs = normalizeProviderConfigs(parseJsonOr({}, configDraft.provider_configs_text));
+    let value = providerConfigs?.[canonicalId]?.[field];
     if ((value === undefined || value === null || value === '') && field === 'embedding_model') {
-      value = providerConfigs?.[providerId]?.model;
+      value = providerConfigs?.[canonicalId]?.model;
     }
     if ((value === undefined || value === null || value === '') && field === 'llm_model') {
-      value = providerConfigs?.[providerId]?.llm_model ?? providerConfigs?.[providerId]?.model;
+      value = providerConfigs?.[canonicalId]?.llm_model ?? providerConfigs?.[canonicalId]?.model;
     }
     if (value !== undefined && value !== null && value !== '') return value;
 
-    if (providerId === configDraft.llm_provider) {
+    if (canonicalId === canonicalProviderId(configDraft.llm_provider)) {
       if (field === 'base_url' && configDraft.llm_base_url) return configDraft.llm_base_url;
       if (field === 'api_key' && configDraft.llm_api_key) return configDraft.llm_api_key;
       if (field === 'llm_model' && configDraft.llm_model) return configDraft.llm_model;
@@ -417,28 +409,140 @@
   }
 
   function providerModelOptions(providerId, family) {
-    const provider = providerDefinition(providerId);
+    const canonicalId = canonicalProviderId(providerId);
+    const provider = providerDefinition(canonicalId);
     const catalogOptions = provider?.models?.[family] ?? [];
+    const providerConfigs = normalizeProviderConfigs(parseJsonOr({}, configDraft.provider_configs_text));
+    const configModels = Array.isArray(providerConfigs?.[canonicalId]?.[family === 'chat' ? 'chat_models' : 'embedding_models'])
+      ? providerConfigs[canonicalId][family === 'chat' ? 'chat_models' : 'embedding_models']
+      : [];
+    const remoteModels = Array.isArray(fetchedProviderModels?.[canonicalId]?.[family])
+      ? fetchedProviderModels[canonicalId][family]
+      : [];
+    const mergedCatalog = [...catalogOptions];
+    for (const model of configModels) {
+      if (model && !mergedCatalog.some((item) => item.value === model)) {
+        mergedCatalog.push({ value: model, label: `${model} (手动)` });
+      }
+    }
+    for (const model of remoteModels) {
+      if (model?.id && !mergedCatalog.some((item) => item.value === model.id)) {
+        mergedCatalog.push({ value: model.id, label: `${model.label || model.id} (远程)` });
+      }
+    }
     const field = providerModelField(family);
     const currentValue = providerConfigValue(providerId, field, '');
-    if (currentValue && !catalogOptions.some((item) => item.value === currentValue)) {
-      return [...catalogOptions, { value: currentValue, label: `${currentValue} (当前自定义)` }];
+    if (currentValue && !mergedCatalog.some((item) => item.value === currentValue)) {
+      return [...mergedCatalog, { value: currentValue, label: `${currentValue} (当前自定义)` }];
     }
-    return catalogOptions;
+    return mergedCatalog;
   }
 
   function providerModelValue(providerId, family) {
     const field = providerModelField(family);
-    if (family === 'chat' && providerId === configDraft.llm_provider && configDraft.llm_model) {
+    if (family === 'chat' && canonicalProviderId(providerId) === canonicalProviderId(configDraft.llm_provider) && configDraft.llm_model) {
       return configDraft.llm_model;
     }
     return providerConfigValue(providerId, field, '');
+  }
+
+  function providerModelSourceLabel(source) {
+    if (source === 'synced') return '已同步';
+    if (source === 'remote') return '远程';
+    if (source === 'manual') return '手动';
+    if (source === 'current') return '当前';
+    return '预设';
+  }
+
+  function inferModelFamily(modelId, allowedFamilies = ['chat']) {
+    if (allowedFamilies.length === 1) return allowedFamilies[0];
+    const normalized = String(modelId || '').trim().toLowerCase();
+    const embeddingMarkers = ['embedding', 'text-embedding', 'bge-', 'm3e', 'e5', 'rerank'];
+    return embeddingMarkers.some((marker) => normalized.includes(marker)) ? 'embedding' : 'chat';
+  }
+
+  function providerModelTableRows(providerId) {
+    const provider = providerDefinition(providerId);
+    if (!provider) return [];
+
+    return provider.families.flatMap((family) => {
+      const currentValue = providerModelValue(providerId, family);
+      const rows = [];
+      const seen = new Set();
+
+      for (const item of provider.models?.[family] ?? []) {
+        const modelId = String(item?.value || '').trim();
+        if (!modelId || seen.has(modelId)) continue;
+        seen.add(modelId);
+        rows.push({
+          family,
+          id: modelId,
+          label: item?.label || modelId,
+          source: 'preset',
+          selected: currentValue === modelId,
+          removable: false,
+        });
+      }
+
+      for (const modelId of providerSyncedModels(providerId, family)) {
+        if (!modelId || seen.has(modelId)) continue;
+        seen.add(modelId);
+        rows.push({
+          family,
+          id: modelId,
+          label: modelId,
+          source: 'synced',
+          selected: currentValue === modelId,
+          removable: false,
+        });
+      }
+
+      for (const modelId of providerCustomModels(providerId, family)) {
+        if (!modelId || seen.has(modelId)) continue;
+        seen.add(modelId);
+        rows.push({
+          family,
+          id: modelId,
+          label: modelId,
+          source: 'manual',
+          selected: currentValue === modelId,
+          removable: true,
+        });
+      }
+
+      return rows;
+    });
+  }
+
+  function filteredProviderModelRows(providerId, searchQuery) {
+    const normalizedQuery = String(searchQuery || '').trim().toLowerCase();
+    return providerModelTableRows(providerId).filter((row) => {
+      if (!normalizedQuery) return true;
+      return [row.id, row.label, modelFamilyMeta[row.family]?.label]
+        .filter(Boolean)
+        .some((value) => String(value).toLowerCase().includes(normalizedQuery));
+    });
+  }
+
+  function filteredProviderCatalog() {
+    const query = String(providerSearch || '').trim().toLowerCase();
+    if (!query) return providerCatalog;
+    return providerCatalog.filter((provider) =>
+      [provider.title, provider.vendor, provider.id, provider.description]
+        .filter(Boolean)
+        .some((value) => String(value).toLowerCase().includes(query))
+    );
   }
 
   let activeSection = 'overview';
   let documentMode = 'ingest';
   let configMode = 'provider';
   let providerEditor = 'doubao';
+  let providerSearch = '';
+  let providerModelSearch = '';
+  let fetchedProviderModels = {};
+  let providerFetchBusy = {};
+  let customModelDrafts = {};
   let managedPage = 0;
   let managedPageSize = 8;
   let queuedFiles = [];
@@ -633,6 +737,7 @@
     if (!providerDefinition(providerEditor)) {
       providerEditor = preferred;
     }
+    const families = providerDefinition(providerEditor)?.families ?? [];
   }
 
   function setKnowledgeBase(value) {
@@ -645,6 +750,7 @@
   }
 
   function syncConfigDraft(payload) {
+    payload = normalizeConfigPayload(payload);
     const draft = emptyDraft();
     if (!payload) {
       configDraft = draft;
@@ -723,16 +829,18 @@
   }
 
   function buildConfigPayloadFromDraft() {
-    const providerConfigs = parseJsonOr({}, configDraft.provider_configs_text);
-    const llmProviderConfig = providerConfigs[configDraft.llm_provider] || {};
-    const embeddingProviderConfig = providerConfigs[configDraft.embedding_provider] || {};
+    const providerConfigs = normalizeProviderConfigs(parseJsonOr({}, configDraft.provider_configs_text));
+    const llmProviderId = canonicalProviderId(configDraft.llm_provider);
+    const embeddingProviderId = canonicalProviderId(configDraft.embedding_provider);
+    const llmProviderConfig = providerConfigs[llmProviderId] || {};
+    const embeddingProviderConfig = providerConfigs[embeddingProviderId] || {};
     const nextProviderConfigs = {
       ...providerConfigs,
     };
 
-    if (configDraft.embedding_provider) {
-      nextProviderConfigs[configDraft.embedding_provider] = {
-        ...(nextProviderConfigs[configDraft.embedding_provider] || {}),
+    if (embeddingProviderId) {
+      nextProviderConfigs[embeddingProviderId] = {
+        ...(nextProviderConfigs[embeddingProviderId] || {}),
         ...embeddingProviderConfig,
         embedding_model:
           embeddingProviderConfig.embedding_model
@@ -747,9 +855,9 @@
       };
     }
 
-    if (configDraft.llm_provider) {
-      nextProviderConfigs[configDraft.llm_provider] = {
-        ...(nextProviderConfigs[configDraft.llm_provider] || {}),
+    if (llmProviderId) {
+      nextProviderConfigs[llmProviderId] = {
+        ...(nextProviderConfigs[llmProviderId] || {}),
         ...llmProviderConfig,
         llm_model:
           configDraft.llm_model
@@ -770,12 +878,12 @@
       chroma_persist_directory: configDraft.chroma_persist_directory,
       knowledge_base_db_path: configDraft.knowledge_base_db_path,
       qdrant_url: configDraft.qdrant_url,
-      embedding_provider: configDraft.embedding_provider,
-      embedding_fallback_provider: configDraft.embedding_fallback_provider || null,
+      embedding_provider: embeddingProviderId,
+      embedding_fallback_provider: canonicalProviderId(configDraft.embedding_fallback_provider) || null,
       embedding_device: configDraft.embedding_device,
       embedding_cache_dir: configDraft.embedding_cache_dir || null,
-      llm_provider: configDraft.llm_provider,
-      llm_fallback_provider: configDraft.llm_fallback_provider || null,
+      llm_provider: llmProviderId,
+      llm_fallback_provider: canonicalProviderId(configDraft.llm_fallback_provider) || null,
       llm_model: configDraft.llm_model || llmProviderConfig.llm_model || llmProviderConfig.model || '',
       llm_base_url: llmProviderConfig.base_url ?? configDraft.llm_base_url,
       llm_api_key: llmProviderConfig.api_key ?? configDraft.llm_api_key ?? null,
@@ -837,9 +945,9 @@
   }
 
   function updateEmbeddingProviderConfig(field, value) {
-    const providerName = String(configDraft.embedding_provider || '').trim();
+    const providerName = canonicalProviderId(configDraft.embedding_provider);
     if (!providerName) return;
-    const providerConfigs = parseJsonOr({}, configDraft.provider_configs_text);
+    const providerConfigs = normalizeProviderConfigs(parseJsonOr({}, configDraft.provider_configs_text));
     providerConfigs[providerName] = {
       ...(providerConfigs[providerName] || {}),
       [field]: value,
@@ -852,20 +960,22 @@
   }
 
   function syncEmbeddingProviderDraft(providerName) {
-    const providerConfigs = parseJsonOr({}, configDraft.provider_configs_text);
-    const activeProvider = providerConfigs?.[providerName] ?? {};
+    const canonicalId = canonicalProviderId(providerName);
+    const providerConfigs = normalizeProviderConfigs(parseJsonOr({}, configDraft.provider_configs_text));
+    const activeProvider = providerConfigs?.[canonicalId] ?? {};
     configDraft = {
       ...configDraft,
-      embedding_base_url: activeProvider.base_url ?? '',
+      embedding_base_url: activeProvider.base_url ?? providerDefinition(canonicalId)?.defaults?.base_url ?? '',
       embedding_model: activeProvider.embedding_model ?? activeProvider.model ?? '',
       embedding_api_key: activeProvider.api_key ?? '',
     };
   }
 
   function syncLlmProviderDraft(providerName) {
-    const providerConfigs = parseJsonOr({}, configDraft.provider_configs_text);
-    const activeProvider = providerConfigs?.[providerName] ?? {};
-    const provider = providerDefinition(providerName);
+    const canonicalId = canonicalProviderId(providerName);
+    const providerConfigs = normalizeProviderConfigs(parseJsonOr({}, configDraft.provider_configs_text));
+    const activeProvider = providerConfigs?.[canonicalId] ?? {};
+    const provider = providerDefinition(canonicalId);
     const defaultModel = provider?.models?.chat?.[0]?.value ?? '';
     configDraft = {
       ...configDraft,
@@ -876,14 +986,16 @@
   }
 
   function providerConfigField(providerName, field, fallback = '') {
-    const providerConfigs = parseJsonOr({}, configDraft.provider_configs_text);
-    return providerConfigs?.[providerName]?.[field] ?? fallback;
+    const canonicalId = canonicalProviderId(providerName);
+    const providerConfigs = normalizeProviderConfigs(parseJsonOr({}, configDraft.provider_configs_text));
+    return providerConfigs?.[canonicalId]?.[field] ?? fallback;
   }
 
   function updateNamedProviderConfig(providerName, field, value) {
-    const providerConfigs = parseJsonOr({}, configDraft.provider_configs_text);
-    providerConfigs[providerName] = {
-      ...(providerConfigs[providerName] || {}),
+    const canonicalId = canonicalProviderId(providerName);
+    const providerConfigs = normalizeProviderConfigs(parseJsonOr({}, configDraft.provider_configs_text));
+    providerConfigs[canonicalId] = {
+      ...(providerConfigs[canonicalId] || {}),
       [field]: value,
     };
     configDraft = {
@@ -891,11 +1003,11 @@
       provider_configs_text: JSON.stringify(providerConfigs, null, 2),
     };
 
-    if (providerName === configDraft.embedding_provider) {
-      syncEmbeddingProviderDraft(providerName);
+    if (canonicalId === canonicalProviderId(configDraft.embedding_provider)) {
+      syncEmbeddingProviderDraft(canonicalId);
     }
-    if (providerName === configDraft.llm_provider) {
-      syncLlmProviderDraft(providerName);
+    if (canonicalId === canonicalProviderId(configDraft.llm_provider)) {
+      syncLlmProviderDraft(canonicalId);
     }
   }
 
@@ -921,9 +1033,125 @@
     }
   }
 
-  function selectEmbeddingProvider(providerName) {
+  function providerCustomModels(providerName, family) {
+    const providerConfigs = normalizeProviderConfigs(parseJsonOr({}, configDraft.provider_configs_text));
+    const field = family === 'chat' ? 'chat_models' : 'embedding_models';
+    const canonicalId = canonicalProviderId(providerName);
+    return Array.isArray(providerConfigs?.[canonicalId]?.[field]) ? providerConfigs[canonicalId][field] : [];
+  }
+
+  function providerSyncedModels(providerName, family) {
+    const providerConfigs = normalizeProviderConfigs(parseJsonOr({}, configDraft.provider_configs_text));
+    const field = family === 'chat' ? 'chat_models_synced' : 'embedding_models_synced';
+    const canonicalId = canonicalProviderId(providerName);
+    return Array.isArray(providerConfigs?.[canonicalId]?.[field]) ? providerConfigs[canonicalId][field] : [];
+  }
+
+  function updateProviderCustomModels(providerName, family, models) {
+    const field = family === 'chat' ? 'chat_models' : 'embedding_models';
+    updateNamedProviderConfig(
+      providerName,
+      field,
+      Array.from(new Set((models || []).map((item) => String(item || '').trim()).filter(Boolean)))
+    );
+  }
+
+  function replaceProviderSyncedModels(providerName, family, models) {
+    const field = family === 'chat' ? 'chat_models_synced' : 'embedding_models_synced';
+    const nextModels = Array.from(new Set((models || []).map((item) => String(item || '').trim()).filter(Boolean)));
+    updateNamedProviderConfig(providerName, field, nextModels);
+  }
+
+  function customModelDraftKey(providerName) {
+    return canonicalProviderId(providerName);
+  }
+
+  function addCustomProviderModel(providerName) {
+    const canonicalId = canonicalProviderId(providerName);
+    const key = customModelDraftKey(canonicalId);
+    const draft = String(customModelDrafts[key] || '').trim();
+    if (!draft) {
+      pushToast('模型 ID 为空', '请输入要手动添加的模型 ID。', 'warning');
+      return;
+    }
+    const provider = providerDefinition(canonicalId);
+    const family = inferModelFamily(draft, provider?.families || ['chat']);
+    const nextModels = [...providerCustomModels(providerName, family), draft];
+    updateProviderCustomModels(providerName, family, nextModels);
+    customModelDrafts = {
+      ...customModelDrafts,
+      [key]: '',
+    };
+    pushToast('模型已添加', `${draft} 已加入 ${canonicalId} 的${modelFamilyMeta[family].label}列表。`, 'success');
+  }
+
+  function removeCustomProviderModel(providerName, family, modelId) {
+    const nextModels = providerCustomModels(providerName, family).filter((item) => item !== modelId);
+    updateProviderCustomModels(providerName, family, nextModels);
+  }
+
+  async function fetchProviderModels(providerName, family = null) {
+    providerName = canonicalProviderId(providerName);
     const provider = providerDefinition(providerName);
-    const defaultModel = provider?.models?.embedding?.[0]?.value ?? providerName;
+    const families = family ? [family] : (provider?.families || []);
+    providerFetchBusy = {
+      ...providerFetchBusy,
+      [customModelDraftKey(providerName)]: true,
+    };
+    try {
+      const payload = await api.providerModels({
+        provider: providerName,
+        family,
+        ...identity,
+      });
+      const models = Array.isArray(payload?.models) ? payload.models : [];
+      const nextFamilies = family
+        ? {
+            [family]: models.map((model) => ({
+              ...model,
+              family: family,
+            })),
+          }
+        : families.reduce((acc, item) => {
+            acc[item] = models.filter((model) => {
+              const resolvedFamily = model?.family || inferModelFamily(model?.id, families);
+              return resolvedFamily === item;
+            }).map((model) => ({
+              ...model,
+              family: model?.family || inferModelFamily(model?.id, families),
+            }));
+            return acc;
+          }, {});
+      for (const modelFamily of Object.keys(nextFamilies)) {
+        replaceProviderSyncedModels(
+          providerName,
+          modelFamily,
+          (nextFamilies[modelFamily] || []).map((model) => model.id)
+        );
+      }
+      if (family) {
+        pushToast('模型列表已获取', `${providerName} 返回 ${models.length} 个${modelFamilyMeta[family].label}模型。`, 'success');
+      } else {
+        pushToast(
+          '模型列表已获取',
+          `${providerName} 共返回 ${models.length} 个模型，已按类型写入列表。`,
+          'success'
+        );
+      }
+    } catch (error) {
+      pushToast('获取模型列表失败', error.message, 'warning');
+    } finally {
+      providerFetchBusy = {
+        ...providerFetchBusy,
+        [customModelDraftKey(providerName)]: false,
+      };
+    }
+  }
+
+  function selectEmbeddingProvider(providerName) {
+    providerName = canonicalProviderId(providerName);
+    const provider = providerDefinition(providerName);
+    const defaultModel = provider?.local ? providerName : (provider?.models?.embedding?.[0]?.value ?? '');
     configDraft = {
       ...configDraft,
       embedding_provider: providerName,
@@ -933,6 +1161,7 @@
   }
 
   function selectLlmProvider(providerName) {
+    providerName = canonicalProviderId(providerName);
     const provider = providerDefinition(providerName);
     const defaultModel = provider?.models?.chat?.[0]?.value ?? '';
     configDraft = {
@@ -1494,7 +1723,37 @@
       <div class="sidebar-label">导航</div>
       <div class="nav-list">
         {#each sections as section}
-          {#if section.id === 'config'}
+          {#if section.id === 'documents'}
+            <div class="nav-group {activeSection === 'documents' ? 'active' : ''}">
+              <button
+                class="nav-item {activeSection === 'documents' ? 'active' : ''}"
+                on:click={() => switchSection('documents')}
+              >
+                <span class="nav-title">
+                  <strong>{section.title}</strong>
+                  <span>{section.subtitle}</span>
+                </span>
+              </button>
+              {#if activeSection === 'documents'}
+                <div class="nav-sublist">
+                  {#each documentModes as mode}
+                    <button
+                      class="nav-subitem {activeSection === 'documents' && documentMode === mode.id ? 'active' : ''}"
+                      on:click={() => {
+                        activeSection = 'documents';
+                        switchDocumentMode(mode.id);
+                        syncLocation('documents');
+                        writeState();
+                        void refreshDocumentsSection();
+                      }}
+                    >
+                      {mode.title}
+                    </button>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+          {:else if section.id === 'config'}
             <div class="nav-group {activeSection === 'config' ? 'active' : ''}">
               <button
                 class="nav-item {activeSection === 'config' ? 'active' : ''}"
@@ -1505,22 +1764,24 @@
                   <span>{section.subtitle}</span>
                 </span>
               </button>
-              <div class="nav-sublist">
-                {#each configModes as mode}
-                  <button
-                    class="nav-subitem {activeSection === 'config' && configMode === mode.id ? 'active' : ''}"
-                    on:click={() => {
-                      activeSection = 'config';
-                      switchConfigMode(mode.id);
-                      syncLocation('config');
-                      writeState();
-                      void refreshConfig();
-                    }}
-                  >
-                    {mode.title}
-                  </button>
-                {/each}
-              </div>
+              {#if activeSection === 'config'}
+                <div class="nav-sublist">
+                  {#each configModes as mode}
+                    <button
+                      class="nav-subitem {activeSection === 'config' && configMode === mode.id ? 'active' : ''}"
+                      on:click={() => {
+                        activeSection = 'config';
+                        switchConfigMode(mode.id);
+                        syncLocation('config');
+                        writeState();
+                        void refreshConfig();
+                      }}
+                    >
+                      {mode.title}
+                    </button>
+                  {/each}
+                </div>
+              {/if}
             </div>
           {:else}
             <button
@@ -1564,7 +1825,7 @@
     </div>
   </aside>
 
-  <main class="content">
+  <main class="content {activeSection === 'config' && configMode === 'provider' ? 'content--provider' : ''}">
     {#if activeSection === 'overview'}
       <PageShell title="总览" subtitle="状态、请求、集合、版本。">
         <svelte:fragment slot="actions">
@@ -1696,18 +1957,6 @@
 
     {#if activeSection === 'documents'}
       <PageShell title="文档管理" subtitle="导入、检索、删除。">
-        <svelte:fragment slot="actions">
-          <div class="card-actions">
-            <PageTabs
-              items={documentModes}
-              value={documentMode}
-              ariaLabel="文档模式"
-              compact={true}
-              on:change={(event) => switchDocumentMode(event.detail.value)}
-            />
-          </div>
-        </svelte:fragment>
-
         {#if documentMode === 'ingest'}
           <div class="grid-2">
             <PanelCard title="文件上传" subtitle="上传后自动切片入库。">
@@ -2006,74 +2255,75 @@
     {/if}
 
     {#if activeSection === 'config'}
-      <PageShell title="配置中心" subtitle="按服务商、系统、高级三层管理配置。">
-        <svelte:fragment slot="actions">
-          <div class="card-actions">
-            <button class="button secondary" on:click={reloadConfig} disabled={configBusy}>重新加载</button>
-            <button class="button ghost" on:click={resetConfig} disabled={configBusy}>重置默认</button>
-            <button class="button primary" on:click={saveConfig} disabled={configBusy}>{configBusy ? '保存中...' : '保存配置'}</button>
-          </div>
-        </svelte:fragment>
-
         {#if configMode === 'provider'}
-          <div class="provider-workspace">
-            <div class="provider-grid">
-              {#each providerCatalog as provider}
+          <div class="provider-pane provider-pane--sidebar">
+            <div class="provider-pane__header">
+              <div>
+                <h3>服务商</h3>
+                <p>搜索并切换需要管理的模型服务商。</p>
+              </div>
+            </div>
+            <div class="field">
+              <input bind:value={providerSearch} placeholder="搜索服务商..." />
+            </div>
+            <div class="provider-list">
+              {#each filteredProviderCatalog() as provider}
                 <button
-                  class="provider-card {providerEditor === provider.id ? 'active' : ''}"
+                  class="provider-list-item {providerEditor === provider.id ? 'active' : ''}"
+                  type="button"
                   on:click={() => (providerEditor = provider.id)}
                 >
-                  <div class="provider-card__head">
-                    <div>
-                      <strong>{provider.title}</strong>
-                      <div class="muted small">{provider.vendor}</div>
-                    </div>
-                    <div class="provider-badges">
-                      {#each provider.families as family}
-                        <span class="provider-badge">{modelFamilyMeta[family].label}</span>
-                      {/each}
-                    </div>
+                  <div class="provider-list-item__copy">
+                    <strong>{provider.title}</strong>
+                    <span>{provider.vendor}</span>
                   </div>
-                  <div class="provider-card__body">{provider.description}</div>
+                  <div class="provider-list-item__meta">
+                    <span>{provider.families.length}</span>
+                  </div>
                 </button>
+              {:else}
+                <div class="empty-state">没有匹配到服务商。</div>
               {/each}
             </div>
+          </div>
 
             {#if providerDefinition(providerEditor)}
-              <div class="grid-2">
-                <PanelCard
-                  title={providerDefinition(providerEditor).title}
-                  subtitle={providerDefinition(providerEditor).description}
-                >
-                  <div class="field-row">
-                    <div class="field">
-                      <div class="field-label">服务商</div>
-                      <div class="field-help">{providerDefinition(providerEditor).vendor}</div>
+              <div class="provider-shell__detail">
+                <div class="provider-pane provider-pane--summary">
+                  <div class="provider-pane__header">
+                    <div>
+                      <h3>{providerDefinition(providerEditor).title}</h3>
+                      <p>{providerDefinition(providerEditor).description}</p>
                     </div>
-                    <div class="field">
-                      <div class="field-label">官网</div>
-                      <div class="field-help">
-                        {#if providerDefinition(providerEditor).website}
-                          <a href={providerDefinition(providerEditor).website} target="_blank" rel="noreferrer">
-                            {providerDefinition(providerEditor).website}
-                          </a>
-                        {:else}
-                          本地 provider
-                        {/if}
-                      </div>
+                    <div class="provider-pane__pill">{providerDefinition(providerEditor).families.length} 项能力</div>
+                  </div>
+                  <div class="provider-meta-grid">
+                    <div class="provider-meta-card">
+                      <span class="provider-meta-card__label">厂商</span>
+                      <strong>{providerDefinition(providerEditor).vendor}</strong>
+                    </div>
+                    <div class="provider-meta-card">
+                      <span class="provider-meta-card__label">官网</span>
+                      {#if providerDefinition(providerEditor).website}
+                        <a href={providerDefinition(providerEditor).website} target="_blank" rel="noreferrer">
+                          {providerDefinition(providerEditor).website}
+                        </a>
+                      {:else}
+                        <strong>本地 provider</strong>
+                      {/if}
                     </div>
                   </div>
 
                   {#if !providerDefinition(providerEditor).local}
-                    <div class="field mt-14">
-                      <div class="field-label">Base URL</div>
+                    <div class="field mt-16">
+                      <div class="field-label">API URL</div>
                       <input
                         value={providerConfigValue(providerEditor, 'base_url', providerDefinition(providerEditor).defaults?.base_url ?? '')}
                         placeholder={providerDefinition(providerEditor).defaults?.base_url ?? 'https://your-provider/v1'}
                         on:input={(event) => updateNamedProviderConfig(providerEditor, 'base_url', event.currentTarget.value)}
                       />
                     </div>
-                    <div class="field mt-14">
+                    <div class="field mt-16">
                       <div class="field-label">API Key</div>
                       <input
                         value={providerConfigValue(providerEditor, 'api_key', '')}
@@ -2082,66 +2332,97 @@
                       />
                     </div>
                   {:else}
-                    <div class="field-row mt-14">
-                      <div class="field">
-                        <div class="field-label">Embedding Device</div>
-                        <input bind:value={configDraft.embedding_device} placeholder="cpu / cuda" />
-                      </div>
-                      <div class="field">
-                        <div class="field-label">Embedding Cache Dir</div>
-                        <input bind:value={configDraft.embedding_cache_dir} placeholder="缓存目录，可选" />
-                      </div>
+                    <div class="field mt-16">
+                      <div class="field-label">本地说明</div>
+                      <div class="field-help">本地 embedding provider 不依赖远端 API Key 或 URL，使用左侧系统选项里的本地运行参数。</div>
                     </div>
                   {/if}
+                </div>
+                <div class="provider-pane provider-pane--models">
+                  <div class="provider-pane__header">
+                    <div>
+                      <h3>模型列表</h3>
+                      <p>只展示你手动添加或同步回来的模型，不再提供默认模型占位。</p>
+                    </div>
+                    <div class="provider-pane__pill">{filteredProviderModelRows(providerEditor, '').length} 个模型</div>
+                  </div>
 
-                  <div class="field mt-14">
-                    <div class="field-label">系统绑定</div>
-                    <div class="provider-links">
-                      <span class="collection-chip {configDraft.llm_provider === providerEditor ? 'active' : ''}">
-                        LLM: {configDraft.llm_provider === providerEditor ? '当前已选中' : '未选中'}
-                      </span>
-                      <span class="collection-chip {configDraft.embedding_provider === providerEditor ? 'active' : ''}">
-                        Embedding: {configDraft.embedding_provider === providerEditor ? '当前已选中' : '未选中'}
-                      </span>
+                  <div class="provider-model-toolbar provider-model-toolbar--compact">
+                    <div class="field">
+                      <input bind:value={providerModelSearch} placeholder="搜索模型 ID..." />
+                    </div>
+                    <div class="field field--grow">
+                      <div class="field-row">
+                        <input
+                          value={customModelDrafts[customModelDraftKey(providerEditor)] || ''}
+                          placeholder="输入模型 ID 后手动添加"
+                          on:input={(event) => {
+                            customModelDrafts = {
+                              ...customModelDrafts,
+                              [customModelDraftKey(providerEditor)]: event.currentTarget.value,
+                            };
+                          }}
+                          on:keydown={(event) => event.key === 'Enter' && addCustomProviderModel(providerEditor)}
+                        />
+                        <button class="button ghost" type="button" on:click={() => addCustomProviderModel(providerEditor)}>
+                          添加
+                        </button>
+                        <button
+                          class="button secondary"
+                          type="button"
+                          disabled={providerFetchBusy[customModelDraftKey(providerEditor)]}
+                          on:click={() => fetchProviderModels(providerEditor)}
+                        >
+                          {providerFetchBusy[customModelDraftKey(providerEditor)] ? '同步中...' : '获取模型列表'}
+                        </button>
+                      </div>
                     </div>
                   </div>
-                </PanelCard>
+                  <div class="field-help">手动添加时根据模型 ID 自动判断对话或向量类型。</div>
 
-                <div class="provider-family-stack">
-                  {#each providerDefinition(providerEditor).families as family}
-                    <PanelCard title={modelFamilyMeta[family].label} subtitle={`配置 ${providerDefinition(providerEditor).title} 的${modelFamilyMeta[family].label}默认模型。`}>
-                      <div class="field">
-                        <div class="field-label">预设模型</div>
-                        <SelectField
-                          value={providerModelValue(providerEditor, family)}
-                          options={providerModelOptions(providerEditor, family)}
-                          ariaLabel={`选择 ${providerDefinition(providerEditor).title}${modelFamilyMeta[family].label}`}
-                          on:change={(event) => updateProviderModel(providerEditor, family, event.detail.value)}
-                        />
-                      </div>
-                      <div class="field mt-14">
-                        <div class="field-label">自定义模型 ID</div>
-                        <input
-                          value={providerModelValue(providerEditor, family)}
-                          placeholder="可以直接输入未在预设列表里的模型 ID"
-                          on:input={(event) => updateProviderModel(providerEditor, family, event.currentTarget.value)}
-                        />
-                      </div>
-                      {#if family === 'chat' && providerEditor === 'doubao'}
-                        <div class="field mt-14">
-                          <div class="field-label">LLM 能力</div>
-                          <div class="field-switch">
-                            <label class="collection-chip"><input type="checkbox" bind:checked={configDraft.enable_thinking} /> 深度思考</label>
-                            <label class="collection-chip"><input type="checkbox" bind:checked={configDraft.enable_llm_summary} /> 检索总结</label>
+                  <div class="provider-model-list mt-16">
+                    {#each filteredProviderModelRows(providerEditor, providerModelSearch) as row}
+                      <div class="provider-model-row">
+                        <div class="provider-model-row__identity">
+                          <div class="provider-model-row__icon">{row.family === 'embedding' ? '向' : '话'}</div>
+                          <div class="provider-model-row__copy">
+                            <strong class="provider-model-row__model" title={row.id}>{row.id}</strong>
+                            <div class="provider-model-row__meta">
+                              <span class="provider-model-pill">{modelFamilyMeta[row.family].label}</span>
+                              <span class="provider-model-pill">{providerModelSourceLabel(row.source)}</span>
+                              {#if row.selected}
+                                <span class="provider-model-pill provider-model-pill--active">当前默认</span>
+                              {/if}
+                            </div>
                           </div>
                         </div>
-                      {/if}
-                    </PanelCard>
-                  {/each}
+                        <div class="provider-model-row__actions">
+                          <button
+                            class="button ghost"
+                            type="button"
+                            disabled={row.selected}
+                            on:click={() => updateProviderModel(providerEditor, row.family, row.id)}
+                          >
+                            {row.selected ? '已选中' : '设为默认'}
+                          </button>
+                          {#if row.removable}
+                            <button
+                              class="button danger"
+                              type="button"
+                              on:click={() => removeCustomProviderModel(providerEditor, row.family, row.id)}
+                            >
+                              删除
+                            </button>
+                          {/if}
+                        </div>
+                      </div>
+                    {:else}
+                      <div class="empty-state">当前还没有模型。先点击“获取模型列表”，或手动添加模型 ID。</div>
+                    {/each}
+                  </div>
                 </div>
               </div>
             {/if}
-          </div>
         {/if}
 
         {#if configMode === 'system'}
@@ -2407,15 +2688,16 @@
         {/if}
 
         {#if configMode === 'advanced'}
-          <PanelCard title="完整配置 JSON" subtitle="直接编辑全部配置；保存时会按完整对象提交。">
-            <div class="field">
-              <div class="field-label">Config JSON</div>
-              <textarea bind:value={configDraft.full_config_text} spellcheck="false"></textarea>
-            </div>
-            <div class="field-help">这里是全部配置，不只是 provider_configs。适合直接维护完整配置文件。</div>
-          </PanelCard>
+          <div class="advanced-config-card">
+            <PanelCard title="完整配置 JSON" subtitle="直接编辑全部配置；保存时会按完整对象提交。" fill={true}>
+              <div class="field advanced-config-field">
+                <div class="field-label">Config JSON</div>
+                <textarea class="advanced-config-textarea" bind:value={configDraft.full_config_text} spellcheck="false"></textarea>
+              </div>
+              <div class="field-help">这里是全部配置，不只是 provider_configs。适合直接维护完整配置文件。</div>
+            </PanelCard>
+          </div>
         {/if}
-      </PageShell>
     {/if}
 
   </main>

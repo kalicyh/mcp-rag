@@ -11,6 +11,59 @@ from typing import Any, Dict, Optional
 from pydantic import BaseModel, Field
 
 
+PROVIDER_ALIASES: Dict[str, str] = {
+    "qwen": "aliyun",
+    "dashscope": "aliyun",
+}
+
+
+def canonical_provider_name(provider: str | None) -> str:
+    """Normalize legacy provider aliases to the canonical provider id."""
+
+    provider_name = str(provider or "").strip().lower()
+    return PROVIDER_ALIASES.get(provider_name, provider_name)
+
+
+def normalize_provider_settings_payload(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Rewrite legacy provider ids in a settings payload."""
+
+    payload = dict(data or {})
+    provider_configs = payload.get("provider_configs")
+    if isinstance(provider_configs, dict):
+        normalized_provider_configs: Dict[str, Any] = {}
+        for provider_name, provider_config in provider_configs.items():
+            canonical_name = canonical_provider_name(provider_name)
+            normalized_provider_configs.setdefault(canonical_name, provider_config)
+        payload["provider_configs"] = normalized_provider_configs
+
+    for field in ("embedding_provider", "embedding_fallback_provider", "llm_provider", "llm_fallback_provider"):
+        if payload.get(field):
+            payload[field] = canonical_provider_name(payload[field])
+
+    return payload
+
+
+def _merged_provider_config(default_config: "ProviderConfig", override_config: Any) -> "ProviderConfig":
+    """Merge one provider config with defaults, treating empty strings as missing for built-in scalar fields."""
+
+    if isinstance(override_config, ProviderConfig):
+        override = override_config
+    else:
+        override = ProviderConfig(**(override_config or {}))
+
+    return ProviderConfig(
+        base_url=override.base_url or default_config.base_url,
+        model=override.model or default_config.model,
+        llm_model=override.llm_model or default_config.llm_model,
+        embedding_model=override.embedding_model or default_config.embedding_model,
+        chat_models=override.chat_models or default_config.chat_models,
+        embedding_models=override.embedding_models or default_config.embedding_models,
+        chat_models_synced=override.chat_models_synced or default_config.chat_models_synced,
+        embedding_models_synced=override.embedding_models_synced or default_config.embedding_models_synced,
+        api_key=override.api_key,
+    )
+
+
 class ProviderConfig(BaseModel):
     """Configuration for a specific model provider."""
 
@@ -18,6 +71,10 @@ class ProviderConfig(BaseModel):
     model: str = ""
     llm_model: Optional[str] = None
     embedding_model: Optional[str] = None
+    chat_models: list[str] = Field(default_factory=list)
+    embedding_models: list[str] = Field(default_factory=list)
+    chat_models_synced: list[str] = Field(default_factory=list)
+    embedding_models_synced: list[str] = Field(default_factory=list)
     api_key: Optional[str] = None
 
 
@@ -115,17 +172,24 @@ class Settings(BaseModel):
         default_factory=lambda: {
             "doubao": ProviderConfig(
                 base_url="https://ark.cn-beijing.volces.com/api/v3",
-                model="doubao-embedding-text-240715",
-                llm_model="doubao-seed-1.6-250615",
-                embedding_model="doubao-embedding-text-240715",
+                model="",
+                llm_model=None,
+                embedding_model=None,
                 api_key=None
             ),
             "zhipu": ProviderConfig(
                 base_url="https://open.bigmodel.cn/api/paas/v4",
-                model="embedding-3",
-                llm_model="glm-4-flash",
-                embedding_model="embedding-3",
+                model="",
+                llm_model=None,
+                embedding_model=None,
                 api_key=None
+            ),
+            "aliyun": ProviderConfig(
+                base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+                model="",
+                llm_model=None,
+                embedding_model=None,
+                api_key=None,
             )
         },
         description="各提供商的特定配置"
@@ -134,7 +198,7 @@ class Settings(BaseModel):
     # LLM settings for summary mode
     llm_provider: str = Field(default="doubao", description="LLM 提供商")  # ollama, doubao, chatglm
     llm_fallback_provider: Optional[str] = Field(default=None, description="LLM 回退提供商")
-    llm_model: str = Field(default="doubao-seed-1.6-250615", description="LLM 模型")
+    llm_model: str = Field(default="", description="LLM 模型")
     llm_base_url: str = Field(default="https://ark.cn-beijing.volces.com/api/v3", description="LLM API 基础地址")
     llm_api_key: Optional[str] = Field(default=None, description="LLM API 密钥")
     enable_llm_summary: bool = Field(default=False, description="启用LLM总结")
@@ -153,6 +217,24 @@ class Settings(BaseModel):
     quotas: QuotaSettings = Field(default_factory=QuotaSettings, description="配额配置")
     observability: ObservabilitySettings = Field(default_factory=ObservabilitySettings, description="观测配置")
     provider_budget: ProviderBudgetSettings = Field(default_factory=ProviderBudgetSettings, description="Provider 预算配置")
+
+
+def with_default_provider_configs(settings_obj: Settings) -> Settings:
+    """Ensure newly introduced built-in providers exist alongside persisted configs."""
+
+    default_provider_configs = Settings().provider_configs
+    merged_provider_configs: Dict[str, ProviderConfig] = dict(default_provider_configs)
+    for provider_name, provider_config in (settings_obj.provider_configs or {}).items():
+        default_config = default_provider_configs.get(provider_name)
+        if default_config is not None:
+            merged_provider_configs[provider_name] = _merged_provider_config(default_config, provider_config)
+        else:
+            merged_provider_configs[provider_name] = (
+                provider_config
+                if isinstance(provider_config, ProviderConfig)
+                else ProviderConfig(**(provider_config or {}))
+            )
+    return settings_obj.model_copy(update={"provider_configs": merged_provider_configs})
 
 
 class ConfigManager:
@@ -187,11 +269,12 @@ class ConfigManager:
             try:
                 with open(self.config_file, 'r', encoding='utf-8') as f:
                     data = json.load(f)
-                return Settings(**data)
+                data = normalize_provider_settings_payload(data)
+                return with_default_provider_configs(Settings(**data))
             except Exception as e:
                 print(f"Failed to load config from {self.config_file}: {e}")
-                return Settings()
-        return Settings()
+                return with_default_provider_configs(Settings())
+        return with_default_provider_configs(Settings())
 
     def _set_settings(self, settings_obj: Settings) -> Settings:
         self._settings = settings_obj
@@ -218,7 +301,7 @@ class ConfigManager:
 
         with self._lock:
             if not self.config_file.exists():
-                defaults = self._settings or Settings()
+                defaults = with_default_provider_configs(self._settings or Settings())
                 self._save_settings(defaults)
                 return self._set_settings(defaults)
             if self._settings is None:
@@ -232,7 +315,7 @@ class ConfigManager:
             with self._lock:
                 current_data = self.settings.model_dump()
                 current_data[key] = value
-                new_settings = Settings(**current_data)
+                new_settings = with_default_provider_configs(Settings(**normalize_provider_settings_payload(current_data)))
                 self._save_settings(new_settings)
                 self._set_settings(new_settings)
                 return True
@@ -246,7 +329,7 @@ class ConfigManager:
             with self._lock:
                 current_data = self.settings.model_dump()
                 current_data.update(updates)
-                new_settings = Settings(**current_data)
+                new_settings = with_default_provider_configs(Settings(**normalize_provider_settings_payload(current_data)))
                 self._save_settings(new_settings)
                 self._set_settings(new_settings)
                 return True

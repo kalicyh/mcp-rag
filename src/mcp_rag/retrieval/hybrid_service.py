@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Sequence
+from typing import Any, Dict, List
 
 from mcp_rag.core.indexing.models import SearchHit, TenantContext
-from mcp_rag.core.indexing.tenancy import resolve_collection_name
 
 from .collection_index import CollectionKeywordIndex, KeywordSearchHit
 from .query_classifier import QueryClassification, QueryClassifier, QueryIntent
@@ -52,6 +51,7 @@ class HybridRetrievalService:
         *,
         vector_store,
         embedding_model,
+        embedding_model_factory=None,
         collection_index: CollectionKeywordIndex | None = None,
         classifier: QueryClassifier | None = None,
         vector_weight: float = 0.7,
@@ -62,6 +62,7 @@ class HybridRetrievalService:
     ):
         self.vector_store = vector_store
         self.embedding_model = embedding_model
+        self.embedding_model_factory = embedding_model_factory
         self.collection_index = collection_index or CollectionKeywordIndex(vector_store)
         self.classifier = classifier or QueryClassifier()
         self.vector_weight = vector_weight
@@ -82,13 +83,11 @@ class HybridRetrievalService:
         if limit <= 0:
             return []
 
-        actual_collection_name = resolve_collection_name(collection_name, tenant=tenant)
         classification = self.classifier.classify(query)
         vector_weight, keyword_weight = self._adapt_weights(classification)
 
-        query_embedding = await self.embedding_model.encode_single(query)
-        vector_hits = await self._search_vector(
-            query_embedding,
+        vector_hits = await self._search_vector_versions(
+            query,
             collection_name=collection_name,
             tenant=tenant,
             limit=max(limit, self.candidate_pool_size),
@@ -111,22 +110,61 @@ class HybridRetrievalService:
             item.rank_position = position
         return final
 
-    async def _search_vector(
+    async def _search_vector_versions(
         self,
-        query_embedding: Sequence[float],
+        query: str,
         *,
         collection_name: str,
         tenant: TenantContext | None,
         limit: int,
         threshold: float,
     ) -> List[SearchHit]:
-        return await self.vector_store.search(
-            query_embedding=query_embedding,
-            collection_name=collection_name,
-            limit=limit,
-            threshold=threshold,
-            tenant=tenant,
-        )
+        if hasattr(self.vector_store, "list_collection_variants"):
+            variants = await self.vector_store.list_collection_variants(collection_name=collection_name, tenant=tenant)
+        else:
+            variants = [{"name": None, "current": True}]
+        hits: list[SearchHit] = []
+        for variant in variants:
+            model = self.embedding_model if variant.get("current") else None
+            if model is None:
+                if self.embedding_model_factory is None:
+                    continue
+                model = await self.embedding_model_factory(variant)
+            query_embedding = await model.encode_single(query)
+            try:
+                if variant.get("name") is None:
+                    variant_hits = await self.vector_store.search(
+                        query_embedding=query_embedding,
+                        collection_name=collection_name,
+                        limit=limit,
+                        threshold=threshold,
+                        tenant=tenant,
+                    )
+                else:
+                    variant_hits = await self.vector_store.search(
+                        query_embedding=query_embedding,
+                        collection_name=collection_name,
+                        actual_collection_name=variant["name"],
+                        limit=limit,
+                        threshold=threshold,
+                        tenant=tenant,
+                    )
+            except Exception as exc:
+                if not self._is_dimension_mismatch_error(exc):
+                    raise
+                logger.warning(
+                    "Skipping collection variant %s for %s due to embedding dimension mismatch.",
+                    variant.get("name") or collection_name,
+                    collection_name,
+                )
+                continue
+            hits.extend(variant_hits)
+        hits.sort(key=lambda item: item.score, reverse=True)
+        return hits[:limit]
+
+    def _is_dimension_mismatch_error(self, exc: Exception) -> bool:
+        message = str(exc).lower()
+        return "expecting embedding with dimension" in message and "got" in message
 
     def _fuse(
         self,
@@ -259,4 +297,3 @@ class HybridRetrievalService:
             if key not in merged or merged[key] in (None, ""):
                 merged[key] = value
         return merged
-

@@ -83,6 +83,11 @@ export const api = {
     request('/config/bulk', { method: 'POST', body: { updates }, headers: identityHeaders(identity) }),
   resetConfig: (identity = {}) => request('/config/reset', { method: 'POST', headers: identityHeaders(identity) }),
   reloadConfig: (identity = {}) => request('/config/reload', { method: 'POST', headers: identityHeaders(identity) }),
+  providerModels: ({ provider, family, ...identity }) =>
+    request(`/providers/${encodeURIComponent(provider)}/models`, {
+      query: { family, ...identityQuery(identity) },
+      headers: identityHeaders(identity),
+    }),
   knowledgeBases: (identity = {}) =>
     request('/knowledge-bases', { query: identityQuery(identity), headers: identityHeaders(identity) }),
   createKnowledgeBase: (payload) =>

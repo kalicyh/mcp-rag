@@ -43,7 +43,7 @@
 <style>
   .page-shell {
     display: grid;
-    gap: 16px;
+    gap: 12px;
     align-content: start;
   }
 
@@ -53,11 +53,12 @@
     align-items: center;
     justify-content: space-between;
     gap: 10px 16px;
-    padding: 14px 18px;
-    border-radius: 24px;
-    background: rgba(255, 255, 255, 0.74);
-    border: 1px solid rgba(15, 23, 42, 0.06);
-    box-shadow: 0 10px 22px rgba(15, 23, 42, 0.05);
+    padding: 0 0 12px;
+    border-radius: 0;
+    background: transparent;
+    border: 0;
+    border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+    box-shadow: none;
   }
 
   .page-shell__copy {
@@ -69,9 +70,9 @@
 
   .page-shell__copy h2 {
     margin: 0;
-    font-size: 1.08rem;
+    font-size: 1rem;
     letter-spacing: -0.02em;
-    font-family: 'Space Grotesk', 'IBM Plex Sans', sans-serif;
+    font-family: 'IBM Plex Sans', sans-serif;
   }
 
   .page-shell__copy p {
@@ -106,16 +107,16 @@
 
   .page-shell__body {
     display: grid;
-    gap: 16px;
+    gap: 12px;
   }
 
   @media (max-width: 720px) {
     .page-shell {
-      gap: 16px;
+      gap: 12px;
     }
 
     .page-shell__header {
-      padding: 14px 16px;
+      padding: 0 0 12px;
     }
 
     .page-shell__aside {

@@ -659,6 +659,23 @@ class RetrievalAndChatServiceTests(unittest.IsolatedAsyncioTestCase):
         await self.retrieval.search(request)
         self.assertEqual(len(self.hybrid.calls), 3)
 
+    async def test_runtime_normalizes_legacy_qwen_provider_alias(self):
+        runtime = ServiceRuntime(
+            settings_obj=_FakeSettings(
+                embedding_provider="qwen",
+                provider_configs={"aliyun": _FakeProviderConfig(base_url="https://dashscope.aliyuncs.com/compatible-mode/v1")},
+            ),
+            document_processor=self.processor,
+            embedding_model=self.embedding,
+            vector_store=self.vector_store,
+            hybrid_service=self.hybrid,
+        )
+
+        indexing_settings = runtime.build_indexing_settings()
+
+        self.assertEqual(indexing_settings.embedding_provider, "aliyun")
+        self.assertEqual(indexing_settings.embedding_base_url, "https://dashscope.aliyuncs.com/compatible-mode/v1")
+
 
 if __name__ == "__main__":
     unittest.main()

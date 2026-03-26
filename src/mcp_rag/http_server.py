@@ -11,7 +11,12 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from pydantic import BaseModel, Field
 from starlette.responses import PlainTextResponse
 
-from .config import config_manager
+try:
+    import httpx
+except ImportError:  # pragma: no cover - optional dependency guard
+    httpx = None
+
+from .config import canonical_provider_name, config_manager
 from .contracts import ChatRequest, DocumentRequest, SearchRequest, normalize_tenant
 from .knowledge_bases import KnowledgeBaseAccessError
 from .shell_factory import (
@@ -198,6 +203,87 @@ class MCPDebugCall(BaseModel):
     tool: str
     arguments: Dict[str, Any] = Field(default_factory=dict)
     api_key: Optional[str] = None
+
+
+def _provider_config_entry(provider: str) -> Any | None:
+    provider_name = canonical_provider_name(provider)
+    provider_configs = getattr(config_manager.settings, "provider_configs", {}) or {}
+    return provider_configs.get(provider_name)
+
+
+def _infer_openai_model_family(model_id: str) -> str:
+    model_name = str(model_id or "").strip().lower()
+    embedding_markers = ("embedding", "bge-", "m3e", "e5", "rerank", "text-embedding")
+    if any(marker in model_name for marker in embedding_markers):
+        return "embedding"
+    return "chat"
+
+
+async def _fetch_openai_compatible_models(base_url: str, api_key: str) -> list[dict[str, str]]:
+    if httpx is None:
+        raise RuntimeError("httpx is not installed")
+
+    async with httpx.AsyncClient(
+        base_url=base_url.rstrip("/"),
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        timeout=20.0,
+    ) as client:
+        response = await client.get("/models")
+        if response.status_code != 200:
+            raise RuntimeError(f"Model API error: {response.status_code} - {response.text}")
+
+        payload = response.json()
+        items = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(items, list):
+            return []
+
+        models = []
+        for item in items:
+            model_id = str((item or {}).get("id") or "").strip()
+            if not model_id:
+                continue
+            models.append(
+                {
+                    "id": model_id,
+                    "label": model_id,
+                    "family": _infer_openai_model_family(model_id),
+                    "source": "remote",
+                }
+            )
+        return models
+
+
+async def _fetch_ollama_models(base_url: str) -> list[dict[str, str]]:
+    if httpx is None:
+        raise RuntimeError("httpx is not installed")
+
+    async with httpx.AsyncClient(base_url=base_url.rstrip("/"), timeout=20.0) as client:
+        response = await client.get("/api/tags")
+        if response.status_code != 200:
+            raise RuntimeError(f"Ollama API error: {response.status_code} - {response.text}")
+
+        payload = response.json()
+        items = payload.get("models") if isinstance(payload, dict) else None
+        if not isinstance(items, list):
+            return []
+
+        models = []
+        for item in items:
+            model_id = str((item or {}).get("name") or "").strip()
+            if not model_id:
+                continue
+            models.append(
+                {
+                    "id": model_id,
+                    "label": model_id,
+                    "family": "chat",
+                    "source": "remote",
+                }
+            )
+        return models
 
 
 def _legacy_collection_key(collection: str, *, scope: str, user_id: int | None, agent_id: int | None) -> str:
@@ -401,6 +487,63 @@ async def reload_config(request: Request):
         await reload_shell_context(context, settings_obj=settings_obj)
         await context.runtime.invalidate_all_retrieval_cache()
         return {"message": "Config reloaded successfully", "reloaded": True}
+
+
+@app.get("/providers/{provider}/models")
+async def get_provider_models(
+    provider: str,
+    request: Request,
+    family: Optional[str] = None,
+):
+    """Fetch provider model list from remote service when supported."""
+    context = request.app.state.shell_context
+    async with context.observability.timer("provider_models.get"):
+        request_context = build_http_request_context(request, subject=f"provider_models:{provider}")
+        enforce_http_guardrails(request, request_context=request_context)
+
+        provider_name = canonical_provider_name(provider)
+        provider_config = _provider_config_entry(provider_name)
+        requested_family = str(family or "").strip().lower() or None
+
+        try:
+            if provider_name in {"m3e-small", "e5-small"}:
+                local_model = provider_name
+                model_family = "embedding"
+                if requested_family and requested_family != model_family:
+                    return {"provider": provider_name, "family": requested_family, "models": []}
+                return {
+                    "provider": provider_name,
+                    "family": model_family,
+                    "models": [{"id": local_model, "label": local_model, "family": model_family, "source": "local"}],
+                }
+
+            if provider_name == "ollama":
+                base_url = str(getattr(provider_config, "base_url", "") or "http://localhost:11434")
+                models = await _fetch_ollama_models(base_url)
+            else:
+                if provider_config is None:
+                    raise HTTPException(status_code=404, detail=f"Unknown provider: {provider_name}")
+                api_key = getattr(provider_config, "api_key", None)
+                base_url = str(getattr(provider_config, "base_url", "") or "")
+                if not base_url:
+                    raise HTTPException(status_code=400, detail="Provider base_url is missing")
+                if not api_key:
+                    raise HTTPException(status_code=400, detail="Provider api_key is missing")
+                models = await _fetch_openai_compatible_models(base_url, api_key)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.warning("Failed to fetch models for provider %s: %s", provider_name, exc)
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+        if requested_family:
+            models = [item for item in models if item.get("family") == requested_family]
+
+        return {
+            "provider": provider_name,
+            "family": requested_family,
+            "models": models,
+        }
 
 
 @app.post("/add-document")

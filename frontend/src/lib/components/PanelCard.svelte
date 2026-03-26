@@ -2,9 +2,10 @@
   export let title = '';
   export let subtitle = '';
   export let compact = false;
+  export let fill = false;
 </script>
 
-<section class="panel-card card">
+<section class:fill class="panel-card card">
   {#if title || subtitle || $$slots.actions}
     <header class="panel-card__header">
       {#if title || subtitle}
@@ -32,31 +33,44 @@
 </section>
 
 <style>
+  .panel-card.fill {
+    min-height: 100%;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
   .panel-card__header {
     display: flex;
     justify-content: space-between;
     gap: 16px;
     align-items: flex-start;
-    padding: 18px 20px 0;
+    padding: 14px 16px 0;
   }
 
   .panel-card__body {
-    padding: 18px 20px 20px;
+    padding: 14px 16px 16px;
+  }
+
+  .panel-card.fill .panel-card__body {
+    min-height: 0;
+    height: 100%;
+    display: grid;
   }
 
   .panel-card__body.compact {
-    padding-top: 16px;
+    padding-top: 12px;
   }
 
   .panel-card__title {
     margin: 0;
-    font-size: 1rem;
-    font-weight: 700;
+    font-size: 0.96rem;
+    font-weight: 600;
   }
 
   .panel-card__subtitle {
-    margin: 0.35rem 0 0;
+    margin: 0.2rem 0 0;
     color: #6f8086;
+    font-size: 0.84rem;
   }
 
   @media (max-width: 720px) {

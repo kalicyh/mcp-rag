@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections import defaultdict
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence
@@ -13,9 +13,11 @@ import chromadb
 
 from .embeddings import EmbeddingModel
 from .models import ChunkRecord, FileSummary, SearchHit, TenantContext
-from .tenancy import parse_collection_name, resolve_collection_name
+from .tenancy import parse_collection_name, resolve_collection_name, sanitize_collection_name
 
 logger = logging.getLogger(__name__)
+
+_EMBEDDING_COLLECTION_SUFFIX_RE = re.compile(r"^(?P<base>.+)__emb_(?P<version>[A-Za-z0-9_.-]+)$")
 
 _RESERVED_KEYS = {
     "id",
@@ -113,8 +115,9 @@ class ChromaVectorStore:
         threshold: float = 0.7,
         tenant: TenantContext | None = None,
         collection_name: str | None = None,
+        actual_collection_name: str | None = None,
     ) -> List[SearchHit]:
-        collection = await self._get_collection(collection_name, tenant)
+        collection = await self._get_collection(collection_name, tenant, actual_collection_name=actual_collection_name)
         results = collection.query(
             query_embeddings=[list(query_embedding)],
             n_results=limit,
@@ -160,31 +163,14 @@ class ChromaVectorStore:
         tenant: TenantContext | None = None,
         collection_name: str | None = None,
     ) -> Dict[str, Any]:
-        collection = await self._get_collection(collection_name, tenant)
-        where = {"filename": filename} if filename else None
-        results = collection.get(
-            limit=limit,
-            offset=offset,
-            where=where,
-            include=["documents", "metadatas"],
+        records = await self._list_document_records(
+            collection_name=collection_name,
+            tenant=tenant,
+            filename=filename,
         )
-        documents: list[dict[str, Any]] = []
-        ids = results.get("ids") or []
-        metadatas = results.get("metadatas") or []
-        contents = results.get("documents") or []
-
-        for index, chunk_id in enumerate(ids):
-            metadata = self._decode_metadata(metadatas[index] if index < len(metadatas) else {})
-            documents.append(
-                {
-                    "id": chunk_id,
-                    "content": contents[index] if index < len(contents) else "",
-                    "metadata": metadata,
-                }
-            )
-
-        total = collection.count()
-        return {"total": total, "documents": documents, "limit": limit, "offset": offset}
+        total = len(records)
+        page = records[offset: offset + limit]
+        return {"total": total, "documents": page, "limit": limit, "offset": offset}
 
     async def list_files(
         self,
@@ -192,9 +178,84 @@ class ChromaVectorStore:
         tenant: TenantContext | None = None,
         collection_name: str | None = None,
     ) -> List[Dict[str, Any]]:
-        collection = await self._get_collection(collection_name, tenant)
-        results = collection.get(include=["documents", "metadatas"])
         groups: dict[str, FileSummary] = {}
+        for variant in await self.list_collection_variants(collection_name=collection_name, tenant=tenant):
+            collection = await self._get_collection(
+                collection_name,
+                tenant,
+                actual_collection_name=variant["name"],
+            )
+            results = collection.get(include=["documents", "metadatas"])
+            self._collect_file_summaries(groups, results)
+        return [
+            {
+                "filename": summary.filename,
+                "source": summary.source,
+                "file_type": summary.file_type,
+                "chunk_count": summary.chunk_count,
+                "total_chars": summary.total_chars,
+                "document_id": summary.document_id,
+                "metadata": summary.metadata,
+                "first_seen_at": summary.first_seen_at.isoformat() if summary.first_seen_at else None,
+            }
+            for summary in groups.values()
+        ]
+
+    async def list_collection_variants(
+        self,
+        *,
+        collection_name: str | None = None,
+        tenant: TenantContext | None = None,
+    ) -> List[Dict[str, Any]]:
+        if self.client is None:
+            await self.initialize()
+        if self.client is None:
+            raise RuntimeError("Vector store not initialized")
+
+        logical_name = resolve_collection_name(
+            collection_name or self.collection_name,
+            tenant=tenant or self.default_tenant,
+        )
+        current_name = self._resolve_runtime_collection_name(
+            collection_name or self.collection_name,
+            tenant=tenant or self.default_tenant,
+        )
+        variants: list[dict[str, Any]] = []
+        for listed in self.client.list_collections():
+            base_name, embedding_version = self._split_embedding_collection_name(listed.name)
+            if base_name != logical_name:
+                continue
+            collection = self.client.get_collection(name=listed.name)
+            metadata = dict(collection.metadata or {})
+            variants.append(
+                {
+                    "name": listed.name,
+                    "logical_name": base_name,
+                    "embedding_version": embedding_version,
+                    "embedding_provider": metadata.get("embedding_provider"),
+                    "embedding_model": metadata.get("embedding_model"),
+                    "embedding_base_url": metadata.get("embedding_base_url"),
+                    "embedding_dimensions": metadata.get("embedding_dimensions"),
+                    "current": listed.name == current_name,
+                }
+            )
+        if not variants:
+            variants.append(
+                {
+                    "name": current_name,
+                    "logical_name": logical_name,
+                    "embedding_version": self._embedding_version(),
+                    "embedding_provider": getattr(self.embedding_model, "provider_name", None),
+                    "embedding_model": getattr(self.embedding_model, "model_name", None) or getattr(self.embedding_model, "model", None),
+                    "embedding_base_url": getattr(self.embedding_model, "base_url", None),
+                    "embedding_dimensions": getattr(self.embedding_model, "dimensions", None),
+                    "current": True,
+                }
+            )
+        variants.sort(key=lambda item: (not item["current"], item["name"]))
+        return variants
+
+    def _collect_file_summaries(self, groups: dict[str, FileSummary], results: Dict[str, Any]) -> None:
         ids = results.get("ids") or []
         metadatas = results.get("metadatas") or []
 
@@ -228,20 +289,6 @@ class ChromaVectorStore:
             if summary.first_seen_at is None:
                 summary.first_seen_at = first_seen_at
 
-        return [
-            {
-                "filename": summary.filename,
-                "source": summary.source,
-                "file_type": summary.file_type,
-                "chunk_count": summary.chunk_count,
-                "total_chars": summary.total_chars,
-                "document_id": summary.document_id,
-                "metadata": summary.metadata,
-                "first_seen_at": summary.first_seen_at.isoformat() if summary.first_seen_at else None,
-            }
-            for summary in groups.values()
-        ]
-
     async def delete_document(
         self,
         document_id: str,
@@ -249,8 +296,13 @@ class ChromaVectorStore:
         tenant: TenantContext | None = None,
         collection_name: str | None = None,
     ) -> bool:
-        collection = await self._get_collection(collection_name, tenant)
-        collection.delete(where={"document_id": document_id})
+        for variant in await self.list_collection_variants(collection_name=collection_name, tenant=tenant):
+            collection = await self._get_collection(
+                collection_name,
+                tenant,
+                actual_collection_name=variant["name"],
+            )
+            collection.delete(where={"document_id": document_id})
         return True
 
     async def delete_file(
@@ -260,27 +312,32 @@ class ChromaVectorStore:
         tenant: TenantContext | None = None,
         collection_name: str | None = None,
     ) -> bool:
-        collection = await self._get_collection(collection_name, tenant)
-        results = collection.get(include=["metadatas"])
-        ids_to_delete: list[str] = []
-        ids = results.get("ids") or []
-        metadatas = results.get("metadatas") or []
+        for variant in await self.list_collection_variants(collection_name=collection_name, tenant=tenant):
+            collection = await self._get_collection(
+                collection_name,
+                tenant,
+                actual_collection_name=variant["name"],
+            )
+            results = collection.get(include=["metadatas"])
+            ids_to_delete: list[str] = []
+            ids = results.get("ids") or []
+            metadatas = results.get("metadatas") or []
 
-        for index, chunk_id in enumerate(ids):
-            metadata = self._decode_metadata(metadatas[index] if index < len(metadatas) else {})
-            current_filename = str(metadata.get("filename") or "")
-            document_id = str(metadata.get("document_id") or "")
-            if current_filename == filename:
-                ids_to_delete.append(chunk_id)
-                continue
-            if document_id and document_id == filename:
-                ids_to_delete.append(chunk_id)
-                continue
-            if "_chunk_" in chunk_id and chunk_id.rsplit("_chunk_", 1)[0] == filename:
-                ids_to_delete.append(chunk_id)
+            for index, chunk_id in enumerate(ids):
+                metadata = self._decode_metadata(metadatas[index] if index < len(metadatas) else {})
+                current_filename = str(metadata.get("filename") or "")
+                document_id = str(metadata.get("document_id") or "")
+                if current_filename == filename:
+                    ids_to_delete.append(chunk_id)
+                    continue
+                if document_id and document_id == filename:
+                    ids_to_delete.append(chunk_id)
+                    continue
+                if "_chunk_" in chunk_id and chunk_id.rsplit("_chunk_", 1)[0] == filename:
+                    ids_to_delete.append(chunk_id)
 
-        if ids_to_delete:
-            collection.delete(ids=ids_to_delete)
+            if ids_to_delete:
+                collection.delete(ids=ids_to_delete)
         return True
 
     async def delete_collection(
@@ -291,11 +348,8 @@ class ChromaVectorStore:
     ) -> None:
         if self.client is None:
             raise RuntimeError("Vector store not initialized")
-        actual = resolve_collection_name(
-            collection_name or self.collection_name,
-            tenant=tenant or self.default_tenant,
-        )
-        self.client.delete_collection(name=actual)
+        for variant in await self.list_collection_variants(collection_name=collection_name, tenant=tenant):
+            self.client.delete_collection(name=variant["name"])
 
     async def list_collections(self) -> List[Dict[str, Any]]:
         if self.client is None:
@@ -304,13 +358,16 @@ class ChromaVectorStore:
         collections = self.client.list_collections()
         output: list[dict[str, Any]] = []
         for collection in collections:
-            parsed = parse_collection_name(collection.name)
+            base_name, embedding_version = self._split_embedding_collection_name(collection.name)
+            parsed = parse_collection_name(base_name)
             output.append(
                 {
                     "name": collection.name,
+                    "logical_name": base_name,
                     "base_collection": parsed.base_collection,
                     "user_id": parsed.user_id,
                     "agent_id": parsed.agent_id,
+                    "embedding_version": embedding_version,
                 }
             )
         return output
@@ -319,14 +376,17 @@ class ChromaVectorStore:
         self,
         collection_name: str | None,
         tenant: TenantContext | None,
+        actual_collection_name: str | None = None,
     ):
         if self.client is None:
             await self.initialize()
-        actual_name = resolve_collection_name(
+        if actual_collection_name:
+            return await self._ensure_collection_by_actual_name(actual_collection_name)
+        actual_name = self._resolve_runtime_collection_name(
             collection_name or self.collection_name,
             tenant=tenant or self.default_tenant,
         )
-        return await self._ensure_collection(actual_name, None)
+        return await self._ensure_collection_by_actual_name(actual_name)
 
     async def _ensure_collection(
         self,
@@ -336,7 +396,15 @@ class ChromaVectorStore:
         if self.client is None:
             raise RuntimeError("Vector store not initialized")
 
-        actual_name = resolve_collection_name(collection_name, tenant=tenant)
+        actual_name = self._resolve_runtime_collection_name(collection_name, tenant=tenant)
+        return await self._ensure_collection_by_actual_name(actual_name)
+
+    async def _ensure_collection_by_actual_name(
+        self,
+        actual_name: str,
+    ):
+        if self.client is None:
+            raise RuntimeError("Vector store not initialized")
         try:
             collection = self.client.get_collection(name=actual_name)
             space = collection.metadata.get("hnsw:space") if collection.metadata else None
@@ -344,14 +412,95 @@ class ChromaVectorStore:
                 self.client.delete_collection(name=actual_name)
                 collection = self.client.create_collection(
                     name=actual_name,
-                    metadata={"hnsw:space": "cosine"},
+                    metadata=self._collection_metadata(),
                 )
             return collection
         except Exception:
             return self.client.create_collection(
                 name=actual_name,
-                metadata={"hnsw:space": "cosine"},
+                metadata=self._collection_metadata(),
             )
+
+    def _resolve_runtime_collection_name(
+        self,
+        collection_name: str,
+        tenant: TenantContext | None = None,
+    ) -> str:
+        logical_name = resolve_collection_name(collection_name, tenant=tenant)
+        embedding_version = self._embedding_version()
+        if not embedding_version:
+            return logical_name
+        return f"{logical_name}__emb_{embedding_version}"
+
+    def _collection_metadata(self) -> Dict[str, Any]:
+        metadata: Dict[str, Any] = {"hnsw:space": "cosine"}
+        if self.embedding_model is None:
+            return metadata
+        provider_name = getattr(self.embedding_model, "provider_name", None)
+        model_name = getattr(self.embedding_model, "model_name", None) or getattr(self.embedding_model, "model", None)
+        base_url = getattr(self.embedding_model, "base_url", None)
+        dimensions = getattr(self.embedding_model, "dimensions", None)
+        if provider_name:
+            metadata["embedding_provider"] = str(provider_name)
+        if model_name:
+            metadata["embedding_model"] = str(model_name)
+        if base_url:
+            metadata["embedding_base_url"] = str(base_url)
+        if dimensions not in (None, "", 0):
+            metadata["embedding_dimensions"] = int(dimensions)
+        return metadata
+
+    def _embedding_version(self) -> str | None:
+        model = self.embedding_model
+        if model is None:
+            return None
+
+        provider_name = getattr(model, "provider_name", None)
+        model_name = getattr(model, "model_name", None) or getattr(model, "model", None)
+        dimensions = getattr(model, "dimensions", None)
+        parts = [str(provider_name or "").strip(), str(model_name or "").strip()]
+        if dimensions not in (None, "", 0):
+            parts.append(f"d{dimensions}")
+        version = sanitize_collection_name("_".join(part for part in parts if part))
+        return version or None
+
+    def _split_embedding_collection_name(self, collection_name: str) -> tuple[str, str | None]:
+        match = _EMBEDDING_COLLECTION_SUFFIX_RE.match(collection_name)
+        if not match:
+            return collection_name, None
+        return match.group("base"), match.group("version")
+
+    async def _list_document_records(
+        self,
+        *,
+        collection_name: str | None,
+        tenant: TenantContext | None,
+        filename: str | None = None,
+    ) -> List[Dict[str, Any]]:
+        records: list[dict[str, Any]] = []
+        where = {"filename": filename} if filename else None
+        for variant in await self.list_collection_variants(collection_name=collection_name, tenant=tenant):
+            collection = await self._get_collection(
+                collection_name,
+                tenant,
+                actual_collection_name=variant["name"],
+            )
+            results = collection.get(where=where, include=["documents", "metadatas"])
+            ids = results.get("ids") or []
+            metadatas = results.get("metadatas") or []
+            contents = results.get("documents") or []
+            for index, chunk_id in enumerate(ids):
+                metadata = self._decode_metadata(metadatas[index] if index < len(metadatas) else {})
+                metadata.setdefault("collection_variant", variant["name"])
+                records.append(
+                    {
+                        "id": chunk_id,
+                        "content": contents[index] if index < len(contents) else "",
+                        "metadata": metadata,
+                    }
+                )
+        records.sort(key=lambda item: str(item["id"]))
+        return records
 
     async def _encode(self, texts: Sequence[str]) -> List[List[float]]:
         if self.embedding_model is None:
@@ -401,4 +550,3 @@ class ChromaVectorStore:
             except ValueError:
                 return None
         return None
-

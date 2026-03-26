@@ -52,6 +52,7 @@ class SentenceTransformerEmbeddingModel(EmbeddingModel):
             raise RuntimeError("sentence-transformers is not installed")
 
         self.model_name = model_name
+        self.provider_name = model_name
         self.device = device
         self.cache_dir = cache_dir
         self.model = None
@@ -88,6 +89,7 @@ class OpenAICompatibleEmbeddingModel(EmbeddingModel):
         api_key: str | None,
         base_url: str,
         model: str,
+        provider_name: str | None = None,
         dimensions: int | None = None,
     ):
         if httpx is None:  # pragma: no cover - dependency guard
@@ -96,6 +98,7 @@ class OpenAICompatibleEmbeddingModel(EmbeddingModel):
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.model = model
+        self.provider_name = provider_name or "openai-compatible"
         self.dimensions = dimensions
         self.client: Optional["httpx.AsyncClient"] = None
 
@@ -139,4 +142,3 @@ class OpenAICompatibleEmbeddingModel(EmbeddingModel):
 
 
 DoubaoEmbeddingModel = OpenAICompatibleEmbeddingModel
-
