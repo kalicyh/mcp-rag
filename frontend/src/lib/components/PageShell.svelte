@@ -45,6 +45,7 @@
     display: grid;
     gap: 12px;
     align-content: start;
+    min-width: 0;
   }
 
   .page-shell__header {
@@ -108,6 +109,7 @@
   .page-shell__body {
     display: grid;
     gap: 12px;
+    min-width: 0;
   }
 
   @media (max-width: 720px) {

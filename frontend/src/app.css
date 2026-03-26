@@ -264,6 +264,7 @@ a {
   gap: 16px;
   align-content: start;
   background: #fdfdfd;
+  min-width: 0;
 }
 
 .content--provider {
@@ -342,12 +343,19 @@ a {
   gap: 16px;
 }
 
+.grid-4 > *,
+.grid-3 > *,
+.grid-2 > * {
+  min-width: 0;
+}
+
 .card {
   background: rgba(255, 255, 255, 0.96);
   border: 1px solid rgba(15, 23, 42, 0.08);
   border-radius: 12px;
   box-shadow: none;
   backdrop-filter: none;
+  min-width: 0;
 }
 
 .card-actions {
@@ -1010,11 +1018,21 @@ a {
   color: var(--muted);
   font-size: 0.82rem;
   margin-top: 4px;
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .result-card {
   display: grid;
   gap: 10px;
+  min-width: 0;
+}
+
+.result-card .toolbar,
+.result-card .toolbar > div {
+  min-width: 0;
 }
 
 .result-score {
@@ -1035,6 +1053,9 @@ a {
   white-space: pre-wrap;
   line-height: 1.7;
   color: var(--text);
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .chat-box {
@@ -1052,6 +1073,7 @@ a {
 .message-card {
   display: grid;
   gap: 8px;
+  min-width: 0;
 }
 
 .message-card.user {
@@ -1074,6 +1096,8 @@ a {
 .message-content {
   white-space: pre-wrap;
   line-height: 1.7;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .message-sources {
@@ -1088,6 +1112,7 @@ a {
   background: rgba(15, 23, 42, 0.04);
   border: 1px solid rgba(15, 23, 42, 0.06);
   font-size: 0.88rem;
+  min-width: 0;
 }
 
 .table {
