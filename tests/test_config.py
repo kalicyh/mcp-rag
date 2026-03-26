@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -182,6 +183,113 @@ class ConfigManagerTests(unittest.TestCase):
             self.assertIsNone(aliyun.llm_model)
             self.assertIsNone(aliyun.embedding_model)
             self.assertEqual(aliyun.api_key, "sk-test")
+
+    def test_provider_model_lists_round_trip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.json"
+            manager = ConfigManager(config_file=str(config_path))
+
+            self.assertTrue(
+                manager.update_settings(
+                    {
+                        "provider_configs": {
+                            "aliyun": {
+                                "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                                "chat_models": ["qwen-max", "qwen-plus"],
+                                "embedding_models": ["text-embedding-v4"],
+                                "chat_models_synced": ["qwen-max-latest"],
+                                "embedding_models_synced": ["text-embedding-v4"],
+                            }
+                        }
+                    }
+                )
+            )
+
+            reloaded = ConfigManager(config_file=str(config_path))
+            aliyun = reloaded.settings.provider_configs["aliyun"]
+
+            self.assertEqual(aliyun.chat_models, ["qwen-max", "qwen-plus"])
+            self.assertEqual(aliyun.embedding_models, ["text-embedding-v4"])
+            self.assertEqual(aliyun.chat_models_synced, ["qwen-max-latest"])
+            self.assertEqual(aliyun.embedding_models_synced, ["text-embedding-v4"])
+
+    def test_provider_settings_are_stored_in_sqlite_not_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.json"
+            db_path = Path(tmpdir) / "knowledge_bases.sqlite3"
+            manager = ConfigManager(config_file=str(config_path))
+
+            self.assertTrue(
+                manager.update_settings(
+                    {
+                        "knowledge_base_db_path": str(db_path),
+                        "embedding_provider": "aliyun",
+                        "llm_provider": "aliyun",
+                        "provider_configs": {
+                            "aliyun": {
+                                "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                                "llm_model": "qwen-plus",
+                                "embedding_model": "text-embedding-v4",
+                            }
+                        },
+                    }
+                )
+            )
+
+            payload = json.loads(config_path.read_text(encoding="utf-8"))
+            self.assertNotIn("provider_configs", payload)
+            self.assertNotIn("embedding_provider", payload)
+            self.assertNotIn("llm_provider", payload)
+
+            with sqlite3.connect(db_path) as connection:
+                row = connection.execute(
+                    "SELECT payload FROM service_provider_settings WHERE singleton_id = 1"
+                ).fetchone()
+
+            self.assertIsNotNone(row)
+            stored_payload = json.loads(row[0])
+            self.assertEqual(stored_payload["embedding_provider"], "aliyun")
+            self.assertEqual(stored_payload["llm_provider"], "aliyun")
+            self.assertEqual(stored_payload["provider_configs"]["aliyun"]["llm_model"], "qwen-plus")
+
+    def test_provider_settings_migrate_from_json_to_sqlite(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.json"
+            db_path = Path(tmpdir) / "knowledge_bases.sqlite3"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "knowledge_base_db_path": str(db_path),
+                        "embedding_provider": "qwen",
+                        "llm_provider": "qwen",
+                        "provider_configs": {
+                            "qwen": {
+                                "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                                "llm_model": "qwen-plus",
+                                "embedding_model": "text-embedding-v4",
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            manager = ConfigManager(config_file=str(config_path))
+            settings = manager.settings
+
+            self.assertEqual(settings.embedding_provider, "aliyun")
+            self.assertEqual(settings.llm_provider, "aliyun")
+            self.assertEqual(settings.provider_configs["aliyun"].llm_model, "qwen-plus")
+
+            with sqlite3.connect(db_path) as connection:
+                row = connection.execute(
+                    "SELECT payload FROM service_provider_settings WHERE singleton_id = 1"
+                ).fetchone()
+
+            self.assertIsNotNone(row)
+            stored_payload = json.loads(row[0])
+            self.assertEqual(stored_payload["embedding_provider"], "aliyun")
+            self.assertIn("aliyun", stored_payload["provider_configs"])
 
 if __name__ == "__main__":
     unittest.main()

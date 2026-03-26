@@ -14,6 +14,8 @@ from mcp_rag.services import ChatService, IndexingService, RetrievalService, Ser
 class _FakeProviderConfig:
     base_url: str = "https://example.com/v1"
     model: str = "fake-model"
+    embedding_model: str | None = None
+    llm_model: str | None = None
     api_key: str | None = "fake-key"
 
 
@@ -519,6 +521,23 @@ class RetrievalAndChatServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(chat.sources[0].filename, "guide.md")
         self.assertTrue(self.llm.generate_calls)
 
+    async def test_chat_fallback_response_includes_llm_error(self):
+        self.llm.fail_generate = True
+
+        chat = await self.chat.chat(
+            ChatRequest(
+                query="What is FastAPI?",
+                collection="docs",
+                limit=3,
+                tenant=TenantSpec(base_collection="docs", user_id=7),
+            )
+        )
+
+        self.assertIn("### Retrieved Context", chat.response)
+        self.assertIn("FastAPI routing and dependencies", chat.response)
+        self.assertIn("### Note", chat.response)
+        self.assertIn("LLM error: generate failed", chat.response)
+
     async def test_cache_key_isolated_by_scope_and_request_shape(self):
         request = SearchRequest(
             query="fastapi",
@@ -675,6 +694,29 @@ class RetrievalAndChatServiceTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(indexing_settings.embedding_provider, "aliyun")
         self.assertEqual(indexing_settings.embedding_base_url, "https://dashscope.aliyuncs.com/compatible-mode/v1")
+
+    async def test_runtime_build_embedding_model_prefers_embedding_model_field(self):
+        runtime = ServiceRuntime(
+            settings_obj=_FakeSettings(
+                embedding_provider="aliyun",
+                provider_configs={
+                    "aliyun": _FakeProviderConfig(
+                        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+                        model="",
+                        embedding_model="text-embedding-v4",
+                        api_key="test-key",
+                    )
+                },
+            ),
+            document_processor=self.processor,
+            vector_store=self.vector_store,
+            hybrid_service=self.hybrid,
+        )
+
+        model = runtime.build_embedding_model()
+
+        self.assertEqual(model.model, "text-embedding-v4")
+        self.assertEqual(model.base_url, "https://dashscope.aliyuncs.com/compatible-mode/v1")
 
 
 if __name__ == "__main__":

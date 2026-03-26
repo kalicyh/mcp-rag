@@ -343,10 +343,16 @@ class ServiceRuntime:
         provider_name = canonical_provider_name(provider or self._embedding_provider_name() or "")
         provider_config = self._provider_config(provider_name)
         if provider_config is not None:
+            model_name = (
+                getattr(provider_config, "embedding_model", None)
+                or getattr(provider_config, "model", None)
+                or provider_name
+                or "m3e-small"
+            )
             return OpenAICompatibleEmbeddingModel(
                 api_key=provider_config.api_key,
                 base_url=provider_config.base_url,
-                model=provider_config.model,
+                model=model_name,
                 provider_name=provider_name,
             )
 

@@ -12,6 +12,15 @@ from .runtime import ServiceRuntime
 logger = logging.getLogger(__name__)
 
 
+def _format_llm_fallback_message(error: Exception) -> str:
+    detail = str(error).strip() or error.__class__.__name__
+    return (
+        "### Note\n"
+        "LLM is not available. The above context was retrieved for your query.\n\n"
+        f"LLM error: {detail}"
+    )
+
+
 class ChatService:
     """Generate chat responses from retrieved knowledge base context."""
 
@@ -59,8 +68,7 @@ class ChatService:
             answer = (
                 "### Retrieved Context\n\n"
                 f"{context}\n\n"
-                "### Note\n"
-                "LLM is not available. The above context was retrieved for your query."
+                f"{_format_llm_fallback_message(exc)}"
             )
 
         return ChatResponse(

@@ -159,6 +159,16 @@
     qwen: 'aliyun',
     dashscope: 'aliyun',
   };
+  const advancedConfigExcludedKeys = new Set([
+    'embedding_provider',
+    'embedding_fallback_provider',
+    'provider_configs',
+    'llm_provider',
+    'llm_fallback_provider',
+    'llm_model',
+    'llm_base_url',
+    'llm_api_key',
+  ]);
   const routeSectionMap = {
     overview: 'overview',
     documents: 'documents',
@@ -359,6 +369,15 @@
     };
   }
 
+  function stripAdvancedConfigPayload(payload) {
+    const normalized = normalizeConfigPayload(payload);
+    const nextPayload = { ...(normalized || {}) };
+    for (const key of advancedConfigExcludedKeys) {
+      delete nextPayload[key];
+    }
+    return nextPayload;
+  }
+
   function summarizeUploadFailures(payload) {
     const failedItems = Array.isArray(payload?.results)
       ? payload.results.filter((item) => !item?.processed)
@@ -394,12 +413,6 @@
     const canonicalId = canonicalProviderId(providerId);
     const providerConfigs = normalizeProviderConfigs(parseJsonOr({}, configDraft.provider_configs_text));
     let value = providerConfigs?.[canonicalId]?.[field];
-    if ((value === undefined || value === null || value === '') && field === 'embedding_model') {
-      value = providerConfigs?.[canonicalId]?.model;
-    }
-    if ((value === undefined || value === null || value === '') && field === 'llm_model') {
-      value = providerConfigs?.[canonicalId]?.llm_model ?? providerConfigs?.[canonicalId]?.model;
-    }
     if (value !== undefined && value !== null && value !== '') return value;
 
     if (canonicalId === canonicalProviderId(configDraft.llm_provider)) {
@@ -420,10 +433,18 @@
     const configModels = Array.isArray(providerConfigs?.[canonicalId]?.[family === 'chat' ? 'chat_models' : 'embedding_models'])
       ? providerConfigs[canonicalId][family === 'chat' ? 'chat_models' : 'embedding_models']
       : [];
+    const syncedModels = Array.isArray(providerConfigs?.[canonicalId]?.[family === 'chat' ? 'chat_models_synced' : 'embedding_models_synced'])
+      ? providerConfigs[canonicalId][family === 'chat' ? 'chat_models_synced' : 'embedding_models_synced']
+      : [];
     const remoteModels = Array.isArray(fetchedProviderModels?.[canonicalId]?.[family])
       ? fetchedProviderModels[canonicalId][family]
       : [];
     const mergedCatalog = [...catalogOptions];
+    for (const model of syncedModels) {
+      if (model && !mergedCatalog.some((item) => item.value === model)) {
+        mergedCatalog.push({ value: model, label: `${model} (已同步)` });
+      }
+    }
     for (const model of configModels) {
       if (model && !mergedCatalog.some((item) => item.value === model)) {
         mergedCatalog.push({ value: model, label: `${model} (手动)` });
@@ -436,10 +457,14 @@
     }
     const field = providerModelField(family);
     const currentValue = providerConfigValue(providerId, field, '');
-    if (currentValue && !mergedCatalog.some((item) => item.value === currentValue)) {
-      return [...mergedCatalog, { value: currentValue, label: `${currentValue} (当前自定义)` }];
-    }
     return mergedCatalog;
+  }
+
+  function providerModelSelectOptions(providerId, family) {
+    return providerModelOptions(providerId, family).map((item) => ({
+      value: item.value,
+      label: item.value,
+    }));
   }
 
   function providerModelValue(providerId, family) {
@@ -596,6 +621,8 @@
   let toasts = [];
   let lastRefreshAt = null;
   let loading = true;
+  let autoSaveQueued = false;
+  let autoSaveRunning = false;
 
   function pushToast(title, message = '', tone = 'info') {
     const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -726,7 +753,7 @@
     if (mode === 'advanced') {
       configDraft = {
         ...configDraft,
-        full_config_text: JSON.stringify(buildConfigPayloadFromDraft(), null, 2),
+        full_config_text: JSON.stringify(stripAdvancedConfigPayload(buildConfigPayloadFromDraft()), null, 2),
       };
     }
     configMode = mode;
@@ -776,7 +803,7 @@
     draft.embedding_cache_dir = payload.embedding_cache_dir ?? '';
     draft.llm_provider = payload.llm_provider ?? draft.llm_provider;
     draft.llm_fallback_provider = payload.llm_fallback_provider ?? '';
-    draft.llm_model = payload.llm_model ?? draft.llm_model;
+    draft.llm_model = '';
     draft.llm_base_url = payload.llm_base_url ?? '';
     draft.llm_api_key = payload.llm_api_key ?? '';
     draft.enable_thinking = payload.enable_thinking ?? draft.enable_thinking;
@@ -822,13 +849,13 @@
     draft.provider_configs_text = JSON.stringify(payload.provider_configs ?? {}, null, 2);
     const activeEmbeddingProvider = payload.provider_configs?.[draft.embedding_provider] ?? {};
     draft.embedding_base_url = activeEmbeddingProvider.base_url ?? '';
-    draft.embedding_model = activeEmbeddingProvider.embedding_model ?? activeEmbeddingProvider.model ?? '';
+    draft.embedding_model = activeEmbeddingProvider.embedding_model ?? '';
     draft.embedding_api_key = activeEmbeddingProvider.api_key ?? '';
     const activeLlmProvider = payload.provider_configs?.[draft.llm_provider] ?? {};
-    draft.llm_model = payload.llm_model ?? activeLlmProvider.llm_model ?? activeLlmProvider.model ?? draft.llm_model;
+    draft.llm_model = activeLlmProvider.llm_model ?? '';
     draft.llm_base_url = payload.llm_base_url ?? activeLlmProvider.base_url ?? draft.llm_base_url;
     draft.llm_api_key = payload.llm_api_key ?? activeLlmProvider.api_key ?? draft.llm_api_key;
-    draft.full_config_text = JSON.stringify(payload, null, 2);
+    draft.full_config_text = JSON.stringify(stripAdvancedConfigPayload(payload), null, 2);
     configDraft = draft;
     syncProviderEditor();
   }
@@ -848,15 +875,10 @@
         ...(nextProviderConfigs[embeddingProviderId] || {}),
         ...embeddingProviderConfig,
         embedding_model:
-          embeddingProviderConfig.embedding_model
-          || embeddingProviderConfig.model
-          || configDraft.embedding_model
+          configDraft.embedding_model
+          || embeddingProviderConfig.embedding_model
           || '',
-        model:
-          embeddingProviderConfig.embedding_model
-          || embeddingProviderConfig.model
-          || configDraft.embedding_model
-          || '',
+        model: '',
       };
     }
 
@@ -867,8 +889,8 @@
         llm_model:
           configDraft.llm_model
           || llmProviderConfig.llm_model
-          || llmProviderConfig.model
           || '',
+        model: '',
         base_url: llmProviderConfig.base_url ?? configDraft.llm_base_url,
         api_key: llmProviderConfig.api_key ?? configDraft.llm_api_key ?? null,
       };
@@ -889,7 +911,7 @@
       embedding_cache_dir: configDraft.embedding_cache_dir || null,
       llm_provider: llmProviderId,
       llm_fallback_provider: canonicalProviderId(configDraft.llm_fallback_provider) || null,
-      llm_model: configDraft.llm_model || llmProviderConfig.llm_model || llmProviderConfig.model || '',
+      llm_model: configDraft.llm_model || llmProviderConfig.llm_model || '',
       llm_base_url: llmProviderConfig.base_url ?? configDraft.llm_base_url,
       llm_api_key: llmProviderConfig.api_key ?? configDraft.llm_api_key ?? null,
       enable_thinking: Boolean(configDraft.enable_thinking),
@@ -971,7 +993,7 @@
     configDraft = {
       ...configDraft,
       embedding_base_url: activeProvider.base_url ?? providerDefinition(canonicalId)?.defaults?.base_url ?? '',
-      embedding_model: activeProvider.embedding_model ?? activeProvider.model ?? '',
+      embedding_model: activeProvider.embedding_model ?? '',
       embedding_api_key: activeProvider.api_key ?? '',
     };
   }
@@ -981,12 +1003,11 @@
     const providerConfigs = normalizeProviderConfigs(parseJsonOr({}, configDraft.provider_configs_text));
     const activeProvider = providerConfigs?.[canonicalId] ?? {};
     const provider = providerDefinition(canonicalId);
-    const defaultModel = provider?.models?.chat?.[0]?.value ?? '';
     configDraft = {
       ...configDraft,
       llm_base_url: activeProvider.base_url ?? provider?.defaults?.base_url ?? '',
       llm_api_key: activeProvider.api_key ?? '',
-      llm_model: activeProvider.llm_model ?? activeProvider.model ?? configDraft.llm_model ?? defaultModel,
+      llm_model: activeProvider.llm_model ?? '',
     };
   }
 
@@ -1014,19 +1035,36 @@
     if (canonicalId === canonicalProviderId(configDraft.llm_provider)) {
       syncLlmProviderDraft(canonicalId);
     }
+
+    return providerConfigs;
+  }
+
+  async function persistProviderConfigs(providerConfigs, successTitle, successMessage) {
+    await api.updateConfig({ provider_configs: providerConfigs }, identity);
+    config = {
+      ...(config || {}),
+      provider_configs: providerConfigs,
+    };
+    configDraft = {
+      ...configDraft,
+      provider_configs_text: JSON.stringify(providerConfigs, null, 2),
+    };
+    if (successTitle) {
+      pushToast(successTitle, successMessage, 'success');
+    }
   }
 
   function updateProviderModel(providerName, family, value) {
     const field = providerModelField(family);
     updateNamedProviderConfig(providerName, field, value);
     if (family === 'embedding') {
-      updateNamedProviderConfig(providerName, 'model', value);
       if (providerName === configDraft.embedding_provider) {
         configDraft = {
           ...configDraft,
           embedding_model: value,
         };
       }
+      void requestConfigAutoSave();
       return;
     }
 
@@ -1036,6 +1074,7 @@
         llm_model: value,
       };
     }
+    void requestConfigAutoSave();
   }
 
   function providerCustomModels(providerName, family) {
@@ -1054,7 +1093,7 @@
 
   function updateProviderCustomModels(providerName, family, models) {
     const field = family === 'chat' ? 'chat_models' : 'embedding_models';
-    updateNamedProviderConfig(
+    return updateNamedProviderConfig(
       providerName,
       field,
       Array.from(new Set((models || []).map((item) => String(item || '').trim()).filter(Boolean)))
@@ -1064,14 +1103,14 @@
   function replaceProviderSyncedModels(providerName, family, models) {
     const field = family === 'chat' ? 'chat_models_synced' : 'embedding_models_synced';
     const nextModels = Array.from(new Set((models || []).map((item) => String(item || '').trim()).filter(Boolean)));
-    updateNamedProviderConfig(providerName, field, nextModels);
+    return updateNamedProviderConfig(providerName, field, nextModels);
   }
 
   function customModelDraftKey(providerName) {
     return canonicalProviderId(providerName);
   }
 
-  function addCustomProviderModel(providerName) {
+  async function addCustomProviderModel(providerName) {
     const canonicalId = canonicalProviderId(providerName);
     const key = customModelDraftKey(canonicalId);
     const draft = String(customModelDrafts[key] || '').trim();
@@ -1082,17 +1121,34 @@
     const provider = providerDefinition(canonicalId);
     const family = inferModelFamily(draft, provider?.families || ['chat']);
     const nextModels = [...providerCustomModels(providerName, family), draft];
-    updateProviderCustomModels(providerName, family, nextModels);
-    customModelDrafts = {
-      ...customModelDrafts,
-      [key]: '',
-    };
-    pushToast('模型已添加', `${draft} 已加入 ${canonicalId} 的${modelFamilyMeta[family].label}列表。`, 'success');
+    const providerConfigs = updateProviderCustomModels(providerName, family, nextModels);
+    try {
+      await persistProviderConfigs(
+        providerConfigs,
+        '模型已添加',
+        `${draft} 已加入 ${canonicalId} 的${modelFamilyMeta[family].label}列表。`
+      );
+      customModelDrafts = {
+        ...customModelDrafts,
+        [key]: '',
+      };
+    } catch (error) {
+      pushToast('保存失败', error.message, 'error');
+    }
   }
 
-  function removeCustomProviderModel(providerName, family, modelId) {
+  async function removeCustomProviderModel(providerName, family, modelId) {
     const nextModels = providerCustomModels(providerName, family).filter((item) => item !== modelId);
-    updateProviderCustomModels(providerName, family, nextModels);
+    const providerConfigs = updateProviderCustomModels(providerName, family, nextModels);
+    try {
+      await persistProviderConfigs(
+        providerConfigs,
+        '模型已删除',
+        `${modelId} 已从 ${canonicalProviderId(providerName)} 的${modelFamilyMeta[family].label}列表移除。`
+      );
+    } catch (error) {
+      pushToast('保存失败', error.message, 'error');
+    }
   }
 
   async function fetchProviderModels(providerName, family = null) {
@@ -1134,6 +1190,8 @@
           (nextFamilies[modelFamily] || []).map((model) => model.id)
         );
       }
+      const providerConfigs = normalizeProviderConfigs(parseJsonOr({}, configDraft.provider_configs_text));
+      await persistProviderConfigs(providerConfigs, '', '');
       if (family) {
         pushToast('模型列表已获取', `${providerName} 返回 ${models.length} 个${modelFamilyMeta[family].label}模型。`, 'success');
       } else {
@@ -1155,26 +1213,24 @@
 
   function selectEmbeddingProvider(providerName) {
     providerName = canonicalProviderId(providerName);
-    const provider = providerDefinition(providerName);
-    const defaultModel = provider?.local ? providerName : (provider?.models?.embedding?.[0]?.value ?? '');
     configDraft = {
       ...configDraft,
       embedding_provider: providerName,
-      embedding_model: providerModelValue(providerName, 'embedding') || defaultModel,
+      embedding_model: providerModelValue(providerName, 'embedding'),
     };
     syncEmbeddingProviderDraft(providerName);
+    void requestConfigAutoSave();
   }
 
   function selectLlmProvider(providerName) {
     providerName = canonicalProviderId(providerName);
-    const provider = providerDefinition(providerName);
-    const defaultModel = provider?.models?.chat?.[0]?.value ?? '';
     configDraft = {
       ...configDraft,
       llm_provider: providerName,
-      llm_model: providerModelValue(providerName, 'chat') || defaultModel,
+      llm_model: providerModelValue(providerName, 'chat'),
     };
     syncLlmProviderDraft(providerName);
+    void requestConfigAutoSave();
   }
 
   function buildRequestContext() {
@@ -1578,7 +1634,7 @@
     previewDocument = null;
   }
 
-  async function saveConfig() {
+  async function saveConfig({ silent = false, refresh = true } = {}) {
     configBusy = true;
     try {
       let updates = buildConfigPayloadFromDraft();
@@ -1589,13 +1645,61 @@
         }
       }
       await api.updateConfig(updates, identity);
-      pushToast('配置已保存', '后台已重新加载运行时。', 'success');
-      await refreshOverview();
+      if (!silent) {
+        pushToast('配置已保存', '后台已重新加载运行时。', 'success');
+      }
+      if (refresh) {
+        await refreshOverview();
+      }
     } catch (error) {
-      pushToast('保存失败', error.message, 'error');
+      if (!silent) {
+        pushToast('保存失败', error.message, 'error');
+      }
+      throw error;
     } finally {
       configBusy = false;
     }
+  }
+
+  async function requestConfigAutoSave() {
+    if (activeSection !== 'config') return;
+    autoSaveQueued = true;
+    if (autoSaveRunning) return;
+
+    autoSaveRunning = true;
+    try {
+      while (autoSaveQueued) {
+        autoSaveQueued = false;
+        try {
+          await saveConfig({ silent: true, refresh: false });
+        } catch (error) {
+          pushToast('自动保存失败', error.message, 'error');
+        }
+      }
+    } finally {
+      autoSaveRunning = false;
+    }
+  }
+
+  function handleConfigFieldFocusout(event) {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement)) return;
+    if (target.type === 'checkbox' || target.type === 'radio') return;
+    void requestConfigAutoSave();
+  }
+
+  function handleConfigFieldChange(event) {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement)) return;
+    if (target.type !== 'checkbox' && target.type !== 'radio') return;
+    void requestConfigAutoSave();
+  }
+
+  function handleConfigSelectChange(callback) {
+    return (event) => {
+      callback(event);
+      void requestConfigAutoSave();
+    };
   }
 
   async function resetConfig() {
@@ -2273,6 +2377,7 @@
     {/if}
 
     {#if activeSection === 'config'}
+      <div class="config-shell" on:focusout={handleConfigFieldFocusout} on:change={handleConfigFieldChange}>
         {#if configMode === 'provider'}
           <div class="provider-pane provider-pane--sidebar">
             <div class="provider-pane__header">
@@ -2500,19 +2605,11 @@
                     bind:value={configDraft.embedding_fallback_provider}
                     options={[{ value: '', label: '不启用回退' }, ...providerSelectOptions('embedding')]}
                     ariaLabel="选择向量服务商回退"
+                    on:change={handleConfigSelectChange(() => {})}
                   />
                 </div>
               </div>
               <div class="field-row">
-                <div class="field">
-                  <div class="field-label">向量模型</div>
-                  <SelectField
-                    value={providerModelValue(configDraft.embedding_provider, 'embedding')}
-                    options={providerModelOptions(configDraft.embedding_provider, 'embedding')}
-                    ariaLabel="选择向量模型"
-                    on:change={(event) => updateProviderModel(configDraft.embedding_provider, 'embedding', event.detail.value)}
-                  />
-                </div>
                 <div class="field">
                   <div class="field-label">LLM 服务商</div>
                   <SelectField
@@ -2522,23 +2619,33 @@
                     on:change={(event) => selectLlmProvider(event.detail.value)}
                   />
                 </div>
-              </div>
-              <div class="field-row">
-                <div class="field">
-                  <div class="field-label">LLM 模型</div>
-                  <SelectField
-                    value={configDraft.llm_model}
-                    options={providerModelOptions(configDraft.llm_provider, 'chat')}
-                    ariaLabel="选择 LLM 模型"
-                    on:change={(event) => updateProviderModel(configDraft.llm_provider, 'chat', event.detail.value)}
-                  />
-                </div>
                 <div class="field">
                   <div class="field-label">LLM 服务商回退</div>
                   <SelectField
                     bind:value={configDraft.llm_fallback_provider}
                     options={[{ value: '', label: '不启用回退' }, ...providerSelectOptions('chat')]}
                     ariaLabel="选择 LLM 服务商回退"
+                    on:change={handleConfigSelectChange(() => {})}
+                  />
+                </div>
+              </div>
+              <div class="field-row">
+                <div class="field">
+                  <div class="field-label">向量模型</div>
+                  <SelectField
+                    value={providerModelValue(configDraft.embedding_provider, 'embedding')}
+                    options={providerModelSelectOptions(configDraft.embedding_provider, 'embedding')}
+                    ariaLabel="选择向量模型"
+                    on:change={(event) => updateProviderModel(configDraft.embedding_provider, 'embedding', event.detail.value)}
+                  />
+                </div>
+                <div class="field">
+                  <div class="field-label">LLM 模型</div>
+                  <SelectField
+                    value={configDraft.llm_model}
+                    options={providerModelSelectOptions(configDraft.llm_provider, 'chat')}
+                    ariaLabel="选择 LLM 模型"
+                    on:change={(event) => updateProviderModel(configDraft.llm_provider, 'chat', event.detail.value)}
                   />
                 </div>
               </div>
@@ -2712,10 +2819,11 @@
                 <div class="field-label">Config JSON</div>
                 <textarea class="advanced-config-textarea" bind:value={configDraft.full_config_text} spellcheck="false"></textarea>
               </div>
-              <div class="field-help">这里是全部配置，不只是 provider_configs。适合直接维护完整配置文件。</div>
+              <div class="field-help">这里是 JSON 主配置；服务商、模型和 API Key 已单独存储，不在这里编辑。</div>
             </PanelCard>
           </div>
         {/if}
+      </div>
     {/if}
 
   </main>

@@ -10,6 +10,8 @@
   const dispatch = createEventDispatcher();
   let root;
   let open = false;
+  let searchQuery = '';
+  let searchInput;
 
   $: normalizedOptions = options.map((option) =>
     typeof option === 'string'
@@ -22,10 +24,21 @@
 
   $: selectedOption = normalizedOptions.find((option) => option.value === value);
   $: selectedLabel = selectedOption?.label ?? placeholder;
+  $: filteredOptions = normalizedOptions.filter((option) => {
+    const query = String(searchQuery || '').trim().toLowerCase();
+    if (!query) return true;
+    return [option.label, option.value]
+      .filter(Boolean)
+      .some((item) => String(item).toLowerCase().includes(query));
+  });
 
   function toggle() {
     if (disabled) return;
     open = !open;
+    if (open) {
+      searchQuery = '';
+      queueMicrotask(() => searchInput?.focus());
+    }
   }
 
   function close() {
@@ -35,6 +48,7 @@
   function choose(nextValue) {
     value = nextValue;
     open = false;
+    searchQuery = '';
     dispatch('change', { value: nextValue });
   }
 
@@ -79,21 +93,38 @@
 
   {#if open}
     <div class="select-field__menu" role="listbox" aria-label={ariaLabel}>
-      {#each normalizedOptions as option}
-        <button
-          type="button"
-          role="option"
-          class:selected={option.value === value}
-          class="select-field__option"
-          aria-selected={option.value === value}
-          on:click={() => choose(option.value)}
-        >
-          <span>{option.label}</span>
-          {#if option.value === value}
-            <span class="select-field__check" aria-hidden="true">✓</span>
-          {/if}
-        </button>
-      {/each}
+      {#if normalizedOptions.length >= 8}
+        <div class="select-field__search">
+          <input
+            bind:this={searchInput}
+            bind:value={searchQuery}
+            class="select-field__search-input"
+            type="text"
+            placeholder="输入筛选..."
+            on:click|stopPropagation
+            on:keydown|stopPropagation
+          />
+        </div>
+      {/if}
+      <div class="select-field__options">
+        {#each filteredOptions as option}
+          <button
+            type="button"
+            role="option"
+            class:selected={option.value === value}
+            class="select-field__option"
+            aria-selected={option.value === value}
+            on:click={() => choose(option.value)}
+          >
+            <span>{option.label}</span>
+            {#if option.value === value}
+              <span class="select-field__check" aria-hidden="true">✓</span>
+            {/if}
+          </button>
+        {:else}
+          <div class="select-field__empty">没有匹配项</div>
+        {/each}
+      </div>
     </div>
   {/if}
 </div>
@@ -164,6 +195,35 @@
     background: rgba(255, 253, 249, 0.98);
     box-shadow: 0 18px 36px rgba(15, 23, 42, 0.12);
     backdrop-filter: blur(18px);
+    display: grid;
+    gap: 8px;
+  }
+
+  .select-field__search {
+    padding: 2px;
+  }
+
+  .select-field__search-input {
+    width: 100%;
+    min-height: 42px;
+    border: 1px solid rgba(15, 23, 42, 0.1);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.94);
+    color: var(--text);
+    padding: 0.68rem 0.8rem;
+    outline: none;
+    box-shadow: none;
+  }
+
+  .select-field__search-input:focus {
+    border-color: rgba(15, 118, 110, 0.45);
+    box-shadow: 0 0 0 4px rgba(15, 118, 110, 0.1);
+  }
+
+  .select-field__options {
+    max-height: min(420px, 48vh);
+    overflow-y: auto;
+    padding-right: 2px;
   }
 
   .select-field__option {
@@ -191,5 +251,12 @@
   .select-field__check {
     color: var(--primary-strong);
     font-weight: 700;
+  }
+
+  .select-field__empty {
+    padding: 0.9rem;
+    color: var(--muted);
+    text-align: center;
+    font-size: 0.9rem;
   }
 </style>

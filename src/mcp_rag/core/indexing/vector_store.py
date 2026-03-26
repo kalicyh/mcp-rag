@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 import chromadb
+from chromadb.config import Settings as ChromaSettings
 
 from .embeddings import EmbeddingModel
 from .models import ChunkRecord, FileSummary, SearchHit, TenantContext
@@ -52,7 +53,10 @@ class ChromaVectorStore:
 
     async def initialize(self) -> None:
         Path(self.persist_directory).mkdir(parents=True, exist_ok=True)
-        self.client = chromadb.PersistentClient(path=self.persist_directory)
+        self.client = chromadb.PersistentClient(
+            path=self.persist_directory,
+            settings=ChromaSettings(anonymized_telemetry=False),
+        )
         await self._ensure_collection(self.collection_name, self.default_tenant)
 
     async def add_chunks(

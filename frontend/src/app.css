@@ -274,6 +274,10 @@ a {
   align-items: start;
 }
 
+.config-shell {
+  display: contents;
+}
+
 .toolbar {
   display: flex;
   flex-wrap: wrap;

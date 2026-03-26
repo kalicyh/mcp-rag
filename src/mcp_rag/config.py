@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
-from contextlib import suppress
+import sqlite3
+from contextlib import closing, suppress
+from datetime import datetime, timezone
 from pathlib import Path
 from threading import RLock
 from typing import Any, Dict, Optional
@@ -15,6 +17,21 @@ PROVIDER_ALIASES: Dict[str, str] = {
     "qwen": "aliyun",
     "dashscope": "aliyun",
 }
+
+_PROVIDER_SETTINGS_DB_KEYS = {
+    "embedding_provider",
+    "embedding_fallback_provider",
+    "provider_configs",
+    "llm_provider",
+    "llm_fallback_provider",
+    "llm_model",
+    "llm_base_url",
+    "llm_api_key",
+}
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 def canonical_provider_name(provider: str | None) -> str:
@@ -41,6 +58,90 @@ def normalize_provider_settings_payload(data: Dict[str, Any]) -> Dict[str, Any]:
             payload[field] = canonical_provider_name(payload[field])
 
     return payload
+
+
+def _provider_settings_defaults() -> Dict[str, Any]:
+    defaults = Settings()
+    defaults_payload = defaults.model_dump()
+    return {
+        "embedding_provider": defaults.embedding_provider,
+        "embedding_fallback_provider": defaults.embedding_fallback_provider,
+        "provider_configs": defaults_payload["provider_configs"],
+        "llm_provider": defaults.llm_provider,
+        "llm_fallback_provider": defaults.llm_fallback_provider,
+        "llm_model": defaults.llm_model,
+        "llm_base_url": defaults.llm_base_url,
+        "llm_api_key": defaults.llm_api_key,
+    }
+
+
+def _extract_provider_settings_payload(data: Dict[str, Any]) -> Dict[str, Any]:
+    payload = dict(data or {})
+    return {key: payload.get(key) for key in _PROVIDER_SETTINGS_DB_KEYS if key in payload}
+
+
+def _strip_provider_settings_payload(data: Dict[str, Any]) -> Dict[str, Any]:
+    payload = dict(data or {})
+    for key in _PROVIDER_SETTINGS_DB_KEYS:
+        payload.pop(key, None)
+    return payload
+
+
+class ProviderSettingsStore:
+    """SQLite-backed store for service provider settings."""
+
+    def __init__(self, db_path: str):
+        self.db_path = Path(db_path)
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._initialize()
+
+    def _connect(self) -> sqlite3.Connection:
+        connection = sqlite3.connect(self.db_path)
+        connection.row_factory = sqlite3.Row
+        return connection
+
+    def _initialize(self) -> None:
+        with closing(self._connect()) as connection:
+            connection.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS service_provider_settings (
+                    singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
+                    payload TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                """
+            )
+
+    def load(self) -> Dict[str, Any] | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                "SELECT payload FROM service_provider_settings WHERE singleton_id = 1"
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            payload = json.loads(str(row["payload"]))
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(payload, dict):
+            return None
+        return normalize_provider_settings_payload(payload)
+
+    def save(self, payload: Dict[str, Any]) -> None:
+        normalized = normalize_provider_settings_payload(dict(payload or {}))
+        encoded = json.dumps(normalized, ensure_ascii=False, indent=2)
+        with closing(self._connect()) as connection:
+            connection.execute(
+                """
+                INSERT INTO service_provider_settings(singleton_id, payload, updated_at)
+                VALUES (1, ?, ?)
+                ON CONFLICT(singleton_id) DO UPDATE SET
+                    payload = excluded.payload,
+                    updated_at = excluded.updated_at
+                """,
+                (encoded, _utc_now()),
+            )
+            connection.commit()
 
 
 def _merged_provider_config(default_config: "ProviderConfig", override_config: Any) -> "ProviderConfig":
@@ -246,7 +347,35 @@ class ConfigManager:
         self._settings: Settings | None = None
         self._lock = RLock()
         self._last_mtime_ns: int | None = None
+        self._provider_db_mtime_ns: int | None = None
         self._revision = 0
+
+    def _provider_store_for_payload(self, payload: Dict[str, Any] | Settings | None = None) -> ProviderSettingsStore:
+        if isinstance(payload, Settings):
+            db_path = getattr(payload, "knowledge_base_db_path", None)
+        else:
+            source = dict(payload or {})
+            db_path = source.get("knowledge_base_db_path")
+        resolved_db_path = db_path or str(self.config_file.parent / "knowledge_bases.sqlite3")
+        return ProviderSettingsStore(str(resolved_db_path))
+
+    def _provider_store(self) -> ProviderSettingsStore:
+        return self._provider_store_for_payload(self._settings or None)
+
+    def _read_provider_db_mtime_ns(self, payload: Dict[str, Any] | Settings | None = None) -> int | None:
+        with suppress(FileNotFoundError):
+            return self._provider_store_for_payload(payload).db_path.stat().st_mtime_ns
+        return None
+
+    def _load_provider_settings(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        defaults = _provider_settings_defaults()
+        store = self._provider_store_for_payload(payload)
+        provider_payload = store.load()
+        if provider_payload is None:
+            provider_payload = _extract_provider_settings_payload(payload) or defaults
+            store.save(provider_payload)
+        merged = {**defaults, **provider_payload}
+        return normalize_provider_settings_payload(merged)
 
     @property
     def settings(self) -> Settings:
@@ -265,29 +394,41 @@ class ConfigManager:
 
     def _load_settings(self) -> Settings:
         """Load settings from JSON file."""
+        data: Dict[str, Any]
         if self.config_file.exists():
             try:
                 with open(self.config_file, 'r', encoding='utf-8') as f:
                     data = json.load(f)
-                data = normalize_provider_settings_payload(data)
-                return with_default_provider_configs(Settings(**data))
             except Exception as e:
                 print(f"Failed to load config from {self.config_file}: {e}")
-                return with_default_provider_configs(Settings())
-        return with_default_provider_configs(Settings())
+                data = {}
+        else:
+            data = {}
+
+        data = normalize_provider_settings_payload(data)
+        provider_settings = self._load_provider_settings(data)
+        merged_data = {
+            **_strip_provider_settings_payload(data),
+            **provider_settings,
+        }
+        return with_default_provider_configs(Settings(**merged_data))
 
     def _set_settings(self, settings_obj: Settings) -> Settings:
         self._settings = settings_obj
         self._last_mtime_ns = self._read_mtime_ns()
+        self._provider_db_mtime_ns = self._read_provider_db_mtime_ns(settings_obj)
         self._revision += 1
         return settings_obj
 
     def _save_settings(self, settings: Settings) -> None:
         """Save settings to JSON file."""
         try:
+            self._provider_store_for_payload(settings).save(_extract_provider_settings_payload(settings.model_dump()))
+            json_payload = _strip_provider_settings_payload(settings.model_dump())
             with open(self.config_file, 'w', encoding='utf-8') as f:
-                json.dump(settings.model_dump(), f, ensure_ascii=False, indent=2)
+                json.dump(json_payload, f, ensure_ascii=False, indent=2)
             self._last_mtime_ns = self._read_mtime_ns()
+            self._provider_db_mtime_ns = self._read_provider_db_mtime_ns(settings)
         except Exception as e:
             print(f"Failed to save config to {self.config_file}: {e}")
 
@@ -353,7 +494,12 @@ class ConfigManager:
 
         with self._lock:
             current_mtime_ns = self._read_mtime_ns()
-            if self._settings is None or current_mtime_ns != self._last_mtime_ns:
+            current_provider_db_mtime_ns = self._read_provider_db_mtime_ns(self._settings or None)
+            if (
+                self._settings is None
+                or current_mtime_ns != self._last_mtime_ns
+                or current_provider_db_mtime_ns != self._provider_db_mtime_ns
+            ):
                 return self._set_settings(self._load_settings())
             return None
 
