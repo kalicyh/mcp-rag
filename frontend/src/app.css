@@ -1048,6 +1048,13 @@ a {
   font-weight: 700;
 }
 
+.result-score-stack {
+  display: grid;
+  gap: 6px;
+  justify-items: end;
+  min-width: 0;
+}
+
 .result-content,
 .source-content {
   white-space: pre-wrap;

@@ -25,6 +25,8 @@ class HybridSearchResult:
     filename: str
     content: str
     metadata: Dict[str, Any] = field(default_factory=dict)
+    vector_score: float = 0.0
+    keyword_score: float = 0.0
     retrieval_method: str = "vector"
     rank_position: int = 0
 
@@ -91,7 +93,7 @@ class HybridRetrievalService:
             collection_name=collection_name,
             tenant=tenant,
             limit=max(limit, self.candidate_pool_size),
-            threshold=threshold,
+            threshold=0.0,
         )
         keyword_hits = await self.collection_index.search(
             query,
@@ -158,7 +160,7 @@ class HybridRetrievalService:
                     collection_name,
                 )
                 continue
-            hits.extend(variant_hits)
+            hits.extend(hit for hit in variant_hits if float(hit.score) > 0.0)
         hits.sort(key=lambda item: item.score, reverse=True)
         return hits[:limit]
 
@@ -250,6 +252,8 @@ class HybridRetrievalService:
                         filename=candidate.filename,
                         content=candidate.content,
                         metadata=candidate.metadata,
+                        vector_score=candidate.vector_score,
+                        keyword_score=candidate.keyword_score,
                         retrieval_method=retrieval_method,
                     ),
                 )

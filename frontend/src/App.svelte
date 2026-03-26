@@ -329,6 +329,10 @@
     return value === null || value === undefined || value === '' ? fallback : String(value);
   }
 
+  function formatScore(value) {
+    return `${Number(value || 0).toFixed(3)} / 1.000`;
+  }
+
   function canonicalProviderId(providerId) {
     const normalized = String(providerId || '').trim().toLowerCase();
     return providerAliases[normalized] || normalized;
@@ -2113,7 +2117,11 @@
                           <strong>{safeText(result.filename || result.source || '结果')}</strong>
                           <div class="meta">{JSON.stringify(result.metadata || {})}</div>
                         </div>
-                        <span class="result-score">{(Number(result.score || 0) * 100).toFixed(1)}%</span>
+                        <div class="result-score-stack">
+                          <span class="result-score">向量相似度 {formatScore(result.vector_score)}</span>
+                          <span class="result-score">关键词分 {formatScore(result.keyword_score)}</span>
+                          <span class="result-score">最终融合分 {formatScore(result.score)}</span>
+                        </div>
                       </div>
                       <div class="result-content">{clampText(result.content, 360)}</div>
                     </div>

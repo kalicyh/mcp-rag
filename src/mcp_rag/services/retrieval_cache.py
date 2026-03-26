@@ -41,6 +41,8 @@ def clone_search_response(response: SearchResponse) -> SearchResponse:
             SearchResultView(
                 content=item.content,
                 score=item.score,
+                vector_score=item.vector_score,
+                keyword_score=item.keyword_score,
                 metadata=dict(item.metadata or {}),
                 source=item.source,
                 filename=item.filename,

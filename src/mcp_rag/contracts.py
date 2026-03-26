@@ -119,6 +119,8 @@ class SearchResultView:
 
     content: str
     score: float
+    vector_score: float = 0.0
+    keyword_score: float = 0.0
     metadata: Dict[str, Any] = field(default_factory=dict)
     source: str = ""
     filename: str = ""

@@ -67,6 +67,8 @@ class RetrievalService:
             SearchResultView(
                 content=hit.content,
                 score=hit.score,
+                vector_score=hit.vector_score,
+                keyword_score=hit.keyword_score,
                 metadata=dict(hit.metadata or {}),
                 source=hit.source,
                 filename=hit.filename,
