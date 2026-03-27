@@ -874,6 +874,7 @@ dependencies = [
     { name = "pypdf2" },
     { name = "python-docx" },
     { name = "python-multipart" },
+    { name = "scalar-fastapi" },
     { name = "scikit-learn" },
     { name = "typer" },
     { name = "uvicorn", extra = ["standard"] },
@@ -896,6 +897,7 @@ requires-dist = [
     { name = "pypdf2", specifier = ">=3.0.0" },
     { name = "python-docx", specifier = ">=1.1.0" },
     { name = "python-multipart", specifier = ">=0.0.6" },
+    { name = "scalar-fastapi", specifier = ">=1.8.1" },
     { name = "scikit-learn", specifier = ">=1.3.0" },
     { name = "sentence-transformers", marker = "extra == 'local-embeddings'", specifier = ">=2.2.2" },
     { name = "typer", specifier = ">=0.9.0" },
@@ -2006,6 +2008,15 @@ wheels = [
     { url = "https://pypi.tuna.tsinghua.edu.cn/packages/ad/fe/cad1d9762868c7c5dc70c8620074df28ebb1a8e4c17d4c0cb031889c457e/safetensors-0.6.2-cp38-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:d944cea65fad0ead848b6ec2c37cc0b197194bec228f8020054742190e9312ac", size = 655957 },
     { url = "https://pypi.tuna.tsinghua.edu.cn/packages/59/a7/e2158e17bbe57d104f0abbd95dff60dda916cf277c9f9663b4bf9bad8b6e/safetensors-0.6.2-cp38-abi3-win32.whl", hash = "sha256:cab75ca7c064d3911411461151cb69380c9225798a20e712b102edda2542ddb1", size = 308926 },
     { url = "https://pypi.tuna.tsinghua.edu.cn/packages/2c/c3/c0be1135726618dc1e28d181b8c442403d8dbb9e273fd791de2d4384bcdd/safetensors-0.6.2-cp38-abi3-win_amd64.whl", hash = "sha256:c7b214870df923cbc1593c3faee16bec59ea462758699bd3fee399d00aac072c", size = 320192 },
+]
+
+[[package]]
+name = "scalar-fastapi"
+version = "1.8.1"
+source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple/" }
+sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/af/95/bbbf63b38eafc93862827bda0fba415a486882642d9293f6b918145fd4f9/scalar_fastapi-1.8.1.tar.gz", hash = "sha256:eadb625d386fa94a79e5463af0aa6bcf5e02bc4d665454ed0795960987152531", size = 8258 }
+wheels = [
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/97/29/584cc791765b92a35362733875ff881df3b3d181670285eaf571a17170d7/scalar_fastapi-1.8.1-py3-none-any.whl", hash = "sha256:0ff296877d65082039eba8682fef6eafbe1cd77c5b55a3b3c0b96681eb15ca62", size = 7636 },
 ]
 
 [[package]]

@@ -54,7 +54,8 @@
   .panel-card.fill .panel-card__body {
     min-height: 0;
     height: 100%;
-    display: grid;
+    display: flex;
+    flex-direction: column;
   }
 
   .panel-card__body.compact {

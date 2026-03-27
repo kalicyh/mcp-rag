@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from typing import Any, Awaitable
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import HTMLResponse
+from scalar_fastapi import Layout, Theme, get_scalar_api_reference
 
 from .config import ConfigManager, config_manager
 from .context import RequestContext, TenantSpec, normalize_tenant
@@ -210,8 +212,24 @@ def create_http_app(
         title="MCP-RAG HTTP API",
         description="API for configuring MCP-RAG and adding documents",
         lifespan=lifespan,
+        docs_url=None,
+        redoc_url=None,
     )
     app.state.shell_context = context or get_default_app_context()
+
+    @app.get("/docs", include_in_schema=False)
+    async def scalar_docs() -> HTMLResponse:
+        return get_scalar_api_reference(
+            openapi_url=app.openapi_url or "/openapi.json",
+            title="MCP-RAG API Docs",
+            layout=Layout.MODERN,
+            theme=Theme.DEFAULT,
+            show_sidebar=True,
+            hide_dark_mode_toggle=False,
+            scalar_proxy_url="https://proxy.scalar.com",
+            integration="fastapi",
+        )
+
     return app
 
 

@@ -1,5 +1,6 @@
 <script>
   import { onMount } from 'svelte';
+  import { ArrowLeft, BookText, Plus, Search, Trash2 } from 'lucide-svelte';
   import { api } from './lib/api.js';
   import PageShell from './lib/components/PageShell.svelte';
   import PanelCard from './lib/components/PanelCard.svelte';
@@ -598,10 +599,14 @@
   let workspaceCreateBusy = false;
   let workspaceCreateName = '';
   let workspaceCreateAgentId = '';
+  let workspaceContentDialogOpen = false;
+  let workspaceContentDialogMode = 'upload';
   let workspaceManageBusy = false;
   let workspaceManagedPage = 0;
   let workspaceManagedPageSize = 8;
   let workspaceFileFilter = '';
+  let workspaceManageKnowledgeBaseName = '';
+  let workspacePreviewFilename = '';
   let workspaceDocuments = [];
   let workspaceFiles = [];
   let workspaceDocumentsTotal = 0;
@@ -628,6 +633,7 @@
   let documentsTotal = 0;
   let filesTotal = 0;
   let previewDocument = null;
+  let workspaceSettingsDialogOpen = false;
   let searchQuery = '';
   let searchLimit = 5;
   let searchResults = [];
@@ -827,6 +833,8 @@
       if (parsed.documentKnowledgeBase) documentKnowledgeBase = parsed.documentKnowledgeBase;
       if (parsed.workspaceUploadKnowledgeBase) workspaceUploadKnowledgeBase = parsed.workspaceUploadKnowledgeBase;
       if (parsed.workspaceManageKnowledgeBase) workspaceManageKnowledgeBase = parsed.workspaceManageKnowledgeBase;
+      if (parsed.workspaceManageKnowledgeBaseName) workspaceManageKnowledgeBaseName = parsed.workspaceManageKnowledgeBaseName;
+      if (parsed.workspacePreviewFilename) workspacePreviewFilename = parsed.workspacePreviewFilename;
       if (Array.isArray(parsed.workspaceKnowledgeBaseSelections)) {
         workspaceKnowledgeBaseSelections = parsed.workspaceKnowledgeBaseSelections.map((item) => String(item));
       }
@@ -854,6 +862,8 @@
       manageKnowledgeBase,
       workspaceUploadKnowledgeBase,
       workspaceManageKnowledgeBase,
+      workspaceManageKnowledgeBaseName,
+      workspacePreviewFilename,
       workspaceKnowledgeBaseSelections,
     };
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
@@ -1432,6 +1442,7 @@
       if (!knowledgeBaseById(workspaceManageKnowledgeBase) || knowledgeBaseById(workspaceManageKnowledgeBase)?.scope !== 'agent_private') {
         workspaceManageKnowledgeBase = defaultPrivateId ? String(defaultPrivateId) : '';
       }
+      workspaceManageKnowledgeBaseName = knowledgeBaseById(workspaceManageKnowledgeBase)?.name || '';
       workspaceKnowledgeBaseSelections = workspaceKnowledgeBaseSelections.filter((value) => knowledgeBaseById(value));
       if (!workspaceKnowledgeBaseSelections.length && defaultId) {
         workspaceKnowledgeBaseSelections = [defaultId];
@@ -1608,6 +1619,43 @@
     workspaceCreateAgentId = '';
   }
 
+  function openWorkspaceContentDialog(mode) {
+    if (!selectedWorkspaceKnowledgeBase()) {
+      pushToast('未选择知识库', '请先进入一个知识库。', 'warning');
+      return;
+    }
+    workspaceContentDialogMode = mode === 'manual' ? 'manual' : 'upload';
+    workspaceContentDialogOpen = true;
+  }
+
+  function closeWorkspaceContentDialog() {
+    workspaceContentDialogOpen = false;
+    queuedFiles = [];
+    documentTitle = '';
+    documentContent = '';
+  }
+
+  function openWorkspaceKnowledgeBaseSettings() {
+    if (!selectedWorkspaceKnowledgeBase()) return;
+    workspaceSettingsDialogOpen = true;
+  }
+
+  function backToWorkspaceDetail() {
+    workspaceMode = 'detail';
+    syncLocation('workspace');
+    writeState();
+  }
+
+  function backToWorkspaceFilePreview() {
+    workspaceMode = 'detail-preview';
+    syncLocation('workspace');
+    writeState();
+  }
+
+  function closeWorkspaceKnowledgeBaseSettings() {
+    workspaceSettingsDialogOpen = false;
+  }
+
   function scheduleWorkspaceAutoRefresh() {
     if (!hasMounted || activeSection !== 'workspace') return;
     const nextSignature = `${identity.userId}|${identity.agentId}|${identity.apiKey}|${workspaceMode}`;
@@ -1655,6 +1703,7 @@
       if (createdId) {
         workspaceUploadKnowledgeBase = createdId;
         workspaceManageKnowledgeBase = createdId;
+        workspaceManageKnowledgeBaseName = created?.name || name;
         selectedKnowledgeBase = createdId;
         documentKnowledgeBase = createdId;
         searchKnowledgeBase = createdId;
@@ -1677,17 +1726,29 @@
     const value = kb?.id ? String(kb.id) : '';
     if (!value) return;
     workspaceManageKnowledgeBase = value;
+    workspaceManageKnowledgeBaseName = kb?.name || '';
+    workspacePreviewFilename = '';
+    previewDocument = null;
     workspaceUploadKnowledgeBase = value;
     selectedKnowledgeBase = value;
     documentKnowledgeBase = value;
     searchKnowledgeBase = value;
     chatKnowledgeBase = value;
     manageKnowledgeBase = value;
-    documentMode = 'manage';
-    activeSection = 'documents';
-    syncLocation('documents');
+    workspaceManagedPage = 0;
+    workspaceMode = 'detail';
+    activeSection = 'workspace';
+    syncLocation('workspace');
     writeState();
-    await refreshDocumentsSection();
+    await refreshWorkspaceDocuments();
+  }
+
+  function backToWorkspaceLibrary() {
+    workspaceMode = 'library';
+    workspacePreviewFilename = '';
+    previewDocument = null;
+    syncLocation('workspace');
+    writeState();
   }
 
   async function uploadWorkspaceFiles() {
@@ -2100,6 +2161,49 @@
     previewDocument = doc;
   }
 
+  async function openWorkspaceFilePreview(file) {
+    if (!workspaceManageKnowledgeBase || !file?.filename) return;
+    try {
+      workspacePreviewFilename = file.filename;
+      await restoreWorkspacePreview({ silent: false, expectedChunkCount: file.chunk_count });
+      workspaceMode = 'detail-preview';
+      syncLocation('workspace');
+      writeState();
+    } catch (error) {
+      pushToast('预览失败', error.message, 'warning');
+    }
+  }
+
+  async function restoreWorkspacePreview({ silent = true, expectedChunkCount = null } = {}) {
+    if (!workspaceManageKnowledgeBase || !workspacePreviewFilename) return;
+    const result = await api.listDocuments({
+      ...knowledgeBaseRequest(workspaceManageKnowledgeBase),
+      limit: Math.max(Number(expectedChunkCount ?? 8), 1),
+      offset: 0,
+      filename: workspacePreviewFilename,
+      ...identity,
+    });
+    const docs = result?.documents ?? [];
+    if (!docs.length) {
+      previewDocument = null;
+      if (!silent) {
+        pushToast('暂无可预览内容', '这个文件当前还没有可查看的文本内容。', 'warning');
+      }
+      return;
+    }
+    const mergedContent = docs.map((doc) => safeText(doc.content, '')).filter(Boolean).join('\n\n---\n\n');
+    const firstDoc = docs[0];
+    previewDocument = {
+      ...firstDoc,
+      id: `${workspacePreviewFilename}`,
+      content: mergedContent || firstDoc.content || '该文件暂无可预览内容。',
+      metadata: {
+        ...firstDoc.metadata,
+        filename: workspacePreviewFilename,
+      },
+    };
+  }
+
   function closeDocumentPreview() {
     previewDocument = null;
   }
@@ -2216,6 +2320,12 @@
     if (activeSection === 'workspace') {
       return (async () => {
         await refreshKnowledgeBases({ silent: true });
+        if (workspaceMode === 'detail' || workspaceMode === 'detail-preview') {
+          await refreshWorkspaceDocuments();
+          if (workspaceMode === 'detail-preview' && workspacePreviewFilename) {
+            await restoreWorkspacePreview({ silent: true });
+          }
+        }
       })();
     }
     if (activeSection === 'overview') return refreshOverview();
@@ -2463,26 +2573,47 @@
       </div>
     </div>
 
+    <div class="sidebar-footer-links">
+      <a class="brand-link" href="/docs" target="_blank" rel="noreferrer" title="API 文档">
+        <BookText size={16} strokeWidth={2.2} />
+      </a>
+      <a class="brand-link" href="https://github.com/kalicyh/mcp-rag" target="_blank" rel="noreferrer" title="GitHub 项目">
+        <svg viewBox="0 0 24 24" aria-hidden="true" class="brand-link__github">
+          <path
+            fill="currentColor"
+            d="M12 .5C5.65.5.5 5.66.5 12.02c0 5.09 3.29 9.4 7.86 10.92.57.1.78-.25.78-.55 0-.27-.01-1.18-.02-2.14-3.2.7-3.88-1.36-3.88-1.36-.52-1.34-1.28-1.69-1.28-1.69-1.04-.72.08-.71.08-.71 1.15.08 1.75 1.18 1.75 1.18 1.02 1.76 2.67 1.25 3.32.95.1-.74.4-1.25.72-1.53-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.18-3.1-.12-.29-.51-1.47.11-3.07 0 0 .97-.31 3.19 1.18a10.9 10.9 0 0 1 5.8 0c2.21-1.5 3.18-1.18 3.18-1.18.63 1.6.24 2.78.12 3.07.74.81 1.18 1.84 1.18 3.1 0 4.42-2.69 5.39-5.25 5.67.41.35.77 1.04.77 2.1 0 1.52-.01 2.74-.01 3.11 0 .3.2.66.79.55A11.52 11.52 0 0 0 23.5 12.02C23.5 5.66 18.35.5 12 .5Z"
+          />
+        </svg>
+      </a>
+    </div>
+
   </aside>
 
-  <main class="content {activeSection === 'config' && configMode === 'provider' ? 'content--provider' : ''}">
+  <main class="content {activeSection === 'config' && configMode === 'provider' ? 'content--provider' : ''} {activeSection === 'workspace' && (workspaceMode === 'detail' || workspaceMode === 'detail-preview') ? 'content--workspace-detail' : ''}">
     {#if activeSection === 'workspace'}
-      <PageShell title="用户工作台" subtitle="面向具体用户的知识库管理与检索调试。">
+      <PageShell
+        title={workspaceMode === 'detail' || workspaceMode === 'detail-preview' ? '' : '用户工作台'}
+        subtitle={workspaceMode === 'detail' || workspaceMode === 'detail-preview' ? '' : '面向具体用户的知识库管理与检索调试。'}
+        borderless={workspaceMode === 'detail' || workspaceMode === 'detail-preview'}
+        fill={workspaceMode === 'detail' || workspaceMode === 'detail-preview'}
+      >
         <svelte:fragment slot="meta">
-          <div class="workspace-context-bar">
-            <div class="workspace-context-field">
-              <span>User ID</span>
-              <input bind:value={identity.userId} placeholder="1001" on:input={handleWorkspaceContextEdited} />
+          {#if workspaceMode !== 'detail' && workspaceMode !== 'detail-preview'}
+            <div class="workspace-context-bar">
+              <div class="workspace-context-field">
+                <span>User ID</span>
+                <input bind:value={identity.userId} placeholder="1001" on:input={handleWorkspaceContextEdited} />
+              </div>
+              <div class="workspace-context-field">
+                <span>Agent ID</span>
+                <input bind:value={identity.agentId} placeholder="50" on:input={handleWorkspaceContextEdited} />
+              </div>
+              <div class="workspace-context-field workspace-context-field--wide">
+                <span>API Key</span>
+                <input bind:value={identity.apiKey} placeholder="可选，用于鉴权" on:input={handleWorkspaceContextEdited} />
+              </div>
             </div>
-            <div class="workspace-context-field">
-              <span>Agent ID</span>
-              <input bind:value={identity.agentId} placeholder="50" on:input={handleWorkspaceContextEdited} />
-            </div>
-            <div class="workspace-context-field workspace-context-field--wide">
-              <span>API Key</span>
-              <input bind:value={identity.apiKey} placeholder="可选，用于鉴权" on:input={handleWorkspaceContextEdited} />
-            </div>
-          </div>
+          {/if}
         </svelte:fragment>
 
         {#if workspaceMode === 'library'}
@@ -2505,32 +2636,114 @@
             {/each}
 
             <button class="workspace-library-card workspace-library-card--create" on:click={openWorkspaceCreateDialog}>
-              <span class="workspace-library-card__plus">+</span>
+              <span class="workspace-library-card__plus"><Plus size={22} strokeWidth={2.2} /></span>
               <div class="workspace-library-card__title">新建知识库</div>
-              <div class="workspace-library-card__desc">创建一本新的“书”，加入当前用户的知识库集合。</div>
             </button>
           </div>
-        {:else}
+        {:else if workspaceMode === 'debug'}
           <div class="field-help">若当前用户还没有默认私有知识库，加载时后端会自动准备一个默认库。未绑定 Agent 的用户知识库，会被所有 Agent 查询到；绑定了 Agent 的知识库，只会在对应 Agent 的调试范围中出现。已发现代理：{agentOptions().map((item) => item.label).join('、') || '暂无'}</div>
+        {/if}
 
-          <div class="grid-2">
-            <PanelCard title="当前范围" subtitle="调试当前 Agent 的实际检索范围。">
-              <div class="workspace-kb-summary">当前调试命中的查询范围</div>
-              <div class="workspace-kb-list">
-                {#each workspaceDebugKnowledgeBases as kb}
-                  <div class="workspace-kb-item">
-                    <div>
-                      <strong>{kb.name}</strong>
-                      <div class="muted small">{knowledgeBaseScopeBadge(kb)}</div>
-                    </div>
-                    <span class="status-badge {kb.scope === 'public' ? 'good' : 'info'}">#{kb.id}</span>
-                  </div>
-                {:else}
-                  <div class="empty-state">当前没有可命中的知识库范围。</div>
-                {/each}
-              </div>
-            </PanelCard>
+        {#if workspaceMode === 'detail'}
+          <div class="workspace-detail-topbar">
+            <button class="workspace-back-link" on:click={backToWorkspaceLibrary}>
+              <span aria-hidden="true"><ArrowLeft size={16} strokeWidth={2.4} /></span>
+              <span>返回知识库列表</span>
+            </button>
           </div>
+
+          <PanelCard
+            title={selectedWorkspaceKnowledgeBase()?.name || workspaceManageKnowledgeBaseName || '知识库详情'}
+            subtitle=""
+            fill={true}
+          >
+            <svelte:fragment slot="actions">
+              <div class="card-actions">
+                <button class="button success" on:click={() => openWorkspaceContentDialog('upload')}>新增资料</button>
+                <button class="button secondary" on:click={openWorkspaceKnowledgeBaseSettings} disabled={!selectedWorkspaceKnowledgeBase()}>
+                  知识库设置
+                </button>
+              </div>
+            </svelte:fragment>
+
+            <div class="finder-section">
+              <div class="workspace-search-card">
+                <label class="workspace-search-bar">
+                  <span class="workspace-search-bar__icon" aria-hidden="true"><Search size={18} strokeWidth={2.4} /></span>
+                  <input
+                    class="workspace-search-input"
+                    bind:value={workspaceFileFilter}
+                    placeholder="搜索文件名"
+                    on:keydown={(event) => event.key === 'Enter' && (workspaceManagedPage = 0, refreshWorkspaceDocuments())}
+                  />
+                </label>
+              </div>
+
+              {#if workspaceFiles.length}
+                <div class="workspace-file-grid">
+                  {#each workspaceFiles as file}
+                    <div
+                      class="workspace-file-card"
+                      role="button"
+                      tabindex="0"
+                      on:click={() => openWorkspaceFilePreview(file)}
+                      on:keydown={(event) => (event.key === 'Enter' || event.key === ' ') && openWorkspaceFilePreview(file)}
+                    >
+                      <button
+                        class="workspace-file-card__delete"
+                        aria-label={`删除 ${file.filename}`}
+                        title="删除文件"
+                        on:click|stopPropagation={() => deleteWorkspaceFile(file.filename)}
+                      >
+                        <Trash2 size={16} strokeWidth={2.2} />
+                      </button>
+                      <div class="workspace-file-card__meta">
+                        <div class="workspace-file-card__meta-main">
+                          <span class="status-badge info">{safeText(file.file_type, 'unknown')}</span>
+                        </div>
+                      </div>
+                      <div class="workspace-file-card__name">{file.filename}</div>
+                      <div class="workspace-file-card__footer">
+                        <span class="workspace-file-card__chunks">{safeText(file.chunk_count, 0)} chunks</span>
+                      </div>
+                    </div>
+                  {/each}
+                </div>
+              {:else}
+                <div class="empty-state">当前知识库还没有文件。</div>
+              {/if}
+
+              <div class="workspace-kb-filing">
+                <span>知识记录数 {workspaceDocumentsTotal}</span>
+                <span aria-hidden="true">·</span>
+                <span>文件数 {workspaceFiles.length}</span>
+              </div>
+            </div>
+          </PanelCard>
+        {/if}
+
+        {#if workspaceMode === 'detail-preview'}
+          <div class="workspace-detail-topbar">
+            <button class="workspace-back-link" on:click={backToWorkspaceDetail}>
+              <span aria-hidden="true"><ArrowLeft size={16} strokeWidth={2.4} /></span>
+              <span>返回文件页</span>
+            </button>
+          </div>
+
+          <PanelCard
+            title={safeText(previewDocument?.metadata?.filename, '文件内容')}
+            subtitle={`${selectedWorkspaceKnowledgeBase()?.name || workspaceManageKnowledgeBaseName || '当前知识库'}${previewDocument?.metadata?.timestamp ? ` · ${formatTime(previewDocument.metadata.timestamp)}` : ''}`}
+            fill={true}
+          >
+            {#if previewDocument}
+              <pre class="document-preview workspace-document-preview-page">{previewDocument.content || '该片段没有内容。'}</pre>
+              <div class="workspace-kb-filing">
+                <span>知识记录数 {workspaceDocumentsTotal}</span>
+              </div>
+            {:else}
+              <div class="empty-state">当前没有可预览的内容。</div>
+            {/if}
+          </PanelCard>
         {/if}
 
         {#if workspaceMode === 'debug'}
@@ -3490,7 +3703,7 @@
   </main>
 </div>
 
-{#if previewDocument}
+{#if previewDocument && activeSection !== 'workspace'}
   <div class="modal-backdrop" role="presentation" on:click={closeDocumentPreview}>
     <div
       class="modal-card"
@@ -3557,6 +3770,131 @@
           {workspaceCreateBusy ? '创建中...' : '创建知识库'}
         </button>
       </div>
+    </div>
+  </div>
+{/if}
+
+{#if workspaceSettingsDialogOpen}
+  <div class="modal-backdrop" role="presentation" on:click={closeWorkspaceKnowledgeBaseSettings}>
+    <div
+      class="modal-card modal-card--form"
+      role="dialog"
+      aria-modal="true"
+      aria-label="知识库设置"
+      tabindex="-1"
+      on:click|stopPropagation
+      on:keydown={(event) => event.key === 'Escape' && closeWorkspaceKnowledgeBaseSettings()}
+    >
+      <div class="modal-card__header">
+        <div>
+          <h3>{selectedWorkspaceKnowledgeBase() ? `${selectedWorkspaceKnowledgeBase().name} · 知识库设置` : '知识库设置'}</h3>
+          <p>{selectedWorkspaceKnowledgeBase() ? knowledgeBaseScopeBadge(selectedWorkspaceKnowledgeBase()) : '当前没有选中的知识库。'}</p>
+        </div>
+        <button class="button ghost" type="button" on:click={closeWorkspaceKnowledgeBaseSettings}>关闭</button>
+      </div>
+
+      <div class="field-row">
+        <div class="field">
+          <div class="field-label">知识库范围</div>
+          <input value={selectedWorkspaceKnowledgeBase() ? knowledgeBaseScopeBadge(selectedWorkspaceKnowledgeBase()) : ''} readonly />
+        </div>
+        <div class="field">
+          <div class="field-label">绑定 Agent</div>
+          <input value={selectedWorkspaceKnowledgeBase() ? (selectedWorkspaceKnowledgeBase().owner_agent_id === null || selectedWorkspaceKnowledgeBase().owner_agent_id === undefined ? '未绑定' : String(selectedWorkspaceKnowledgeBase().owner_agent_id)) : ''} readonly />
+        </div>
+      </div>
+    </div>
+  </div>
+{/if}
+
+{#if workspaceContentDialogOpen}
+  <div class="modal-backdrop" role="presentation" on:click={closeWorkspaceContentDialog}>
+    <div
+      class="modal-card modal-card--form"
+      role="dialog"
+      aria-modal="true"
+      aria-label={workspaceContentDialogMode === 'upload' ? '上传文件' : '手动输入'}
+      tabindex="-1"
+      on:click|stopPropagation
+      on:keydown={(event) => event.key === 'Escape' && closeWorkspaceContentDialog()}
+    >
+      <div class="modal-card__header">
+        <div>
+          <h3>新增资料</h3>
+          <p>{selectedWorkspaceKnowledgeBase() ? selectedWorkspaceKnowledgeBase().name : '当前知识库'}</p>
+        </div>
+        <button class="button ghost" type="button" on:click={closeWorkspaceContentDialog}>关闭</button>
+      </div>
+
+      <div class="workspace-content-switch" role="tablist" aria-label="新增资料方式">
+        <button
+          class="workspace-content-switch__button {workspaceContentDialogMode === 'upload' ? 'active' : ''}"
+          type="button"
+          on:click={() => (workspaceContentDialogMode = 'upload')}
+        >
+          上传文件
+        </button>
+        <button
+          class="workspace-content-switch__button {workspaceContentDialogMode === 'manual' ? 'active' : ''}"
+          type="button"
+          on:click={() => (workspaceContentDialogMode = 'manual')}
+        >
+          手动输入
+        </button>
+      </div>
+
+      {#if workspaceContentDialogMode === 'upload'}
+        <div
+          class="dropzone"
+          role="button"
+          tabindex="0"
+          on:dragover|preventDefault={() => {}}
+          on:drop|preventDefault={handleDrop}
+          on:click={openFilePicker}
+          on:keydown={handleDropzoneKeydown}
+        >
+          <h3>拖拽文件到这里</h3>
+          <p>文件会直接写入当前知识库。</p>
+          <input id="file-input" class="hidden-input" type="file" multiple accept=".txt,.md,.pdf,.docx" on:change={(event) => addFiles(event.currentTarget.files)} />
+        </div>
+
+        <div class="file-list">
+          {#each queuedFiles as file, index}
+            <div class="file-chip">
+              <div>
+                <strong>{file.name}</strong>
+                <div class="meta">{toBytes(file.size)} · {file.type || 'unknown'}</div>
+              </div>
+              <button class="button ghost" on:click={() => removeQueuedFile(index)}>移除</button>
+            </div>
+          {:else}
+            <div class="empty-state">还没有选中文件。</div>
+          {/each}
+        </div>
+
+        <div class="card-actions">
+          <button class="button secondary" type="button" on:click={openFilePicker}>选择文件</button>
+          <button class="button primary" type="button" on:click={uploadWorkspaceFiles} disabled={uploadBusy || queuedFiles.length === 0}>
+            {uploadBusy ? '上传中...' : '开始上传'}
+          </button>
+        </div>
+      {:else}
+        <div class="field">
+          <div class="field-label">标题</div>
+          <input bind:value={documentTitle} placeholder="例如：运维说明" />
+        </div>
+
+        <div class="field">
+          <div class="field-label">内容</div>
+          <textarea bind:value={documentContent} placeholder="输入文档内容..."></textarea>
+        </div>
+
+        <div class="card-actions">
+          <button class="button primary" type="button" on:click={addTextDocument} disabled={addBusy}>
+            {addBusy ? '保存中...' : '保存内容'}
+          </button>
+        </div>
+      {/if}
     </div>
   </div>
 {/if}

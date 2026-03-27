@@ -1,33 +1,41 @@
 <script>
   export let title = '';
   export let subtitle = '';
+  export let borderless = false;
+  export let fill = false;
 </script>
 
-<section class="page-shell">
-  <header class="page-shell__header">
-    <div class="page-shell__copy">
-      <h2>{title}</h2>
-      {#if subtitle}
-        <p>{subtitle}</p>
+<section class:fill class="page-shell">
+  {#if title || subtitle || $$slots.meta || $$slots.actions}
+    <header class:borderless class="page-shell__header">
+      {#if title || subtitle}
+        <div class="page-shell__copy">
+          {#if title}
+            <h2>{title}</h2>
+          {/if}
+          {#if subtitle}
+            <p>{subtitle}</p>
+          {/if}
+        </div>
       {/if}
-    </div>
 
-    {#if $$slots.meta || $$slots.actions}
-      <div class="page-shell__aside">
-        {#if $$slots.meta}
-          <div class="page-shell__meta">
-            <slot name="meta" />
-          </div>
-        {/if}
+      {#if $$slots.meta || $$slots.actions}
+        <div class="page-shell__aside">
+          {#if $$slots.meta}
+            <div class="page-shell__meta">
+              <slot name="meta" />
+            </div>
+          {/if}
 
-        {#if $$slots.actions}
-          <div class="page-shell__actions">
-            <slot name="actions" />
-          </div>
-        {/if}
-      </div>
-    {/if}
-  </header>
+          {#if $$slots.actions}
+            <div class="page-shell__actions">
+              <slot name="actions" />
+            </div>
+          {/if}
+        </div>
+      {/if}
+    </header>
+  {/if}
 
   {#if $$slots.toolbar}
     <div class="page-shell__toolbar">
@@ -41,6 +49,11 @@
 </section>
 
 <style>
+  .page-shell.fill {
+    min-height: 100%;
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
   .page-shell {
     display: grid;
     gap: 12px;
@@ -60,6 +73,11 @@
     border: 0;
     border-bottom: 1px solid rgba(15, 23, 42, 0.08);
     box-shadow: none;
+  }
+
+  .page-shell__header.borderless {
+    padding-bottom: 0;
+    border-bottom: 0;
   }
 
   .page-shell__copy {
@@ -110,6 +128,12 @@
     display: grid;
     gap: 12px;
     min-width: 0;
+  }
+
+  .page-shell.fill .page-shell__body {
+    min-height: 0;
+    height: 100%;
+    align-content: stretch;
   }
 
   @media (max-width: 720px) {

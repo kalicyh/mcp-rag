@@ -1,5 +1,6 @@
 <script>
   import { createEventDispatcher, onMount } from 'svelte';
+  import { Check } from 'lucide-svelte';
 
   export let options = [];
   export let value = '';
@@ -118,7 +119,7 @@
           >
             <span>{option.label}</span>
             {#if option.value === value}
-              <span class="select-field__check" aria-hidden="true">✓</span>
+              <span class="select-field__check" aria-hidden="true"><Check size={16} strokeWidth={2.6} /></span>
             {/if}
           </button>
         {:else}
@@ -250,7 +251,10 @@
 
   .select-field__check {
     color: var(--primary-strong);
-    font-weight: 700;
+    display: inline-grid;
+    place-items: center;
+    width: 16px;
+    height: 16px;
   }
 
   .select-field__empty {

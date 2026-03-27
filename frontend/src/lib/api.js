@@ -1,6 +1,16 @@
 const rawBase = (import.meta.env.VITE_API_BASE_URL || '').trim();
 export const API_BASE = rawBase.replace(/\/+$/, '');
 
+function withKbIdAlias(payload = {}) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return payload;
+  if (payload.kb_id !== undefined && payload.kb_id !== null) return payload;
+  if (payload.kbId === undefined || payload.kbId === null) return payload;
+  return {
+    ...payload,
+    kb_id: payload.kbId,
+  };
+}
+
 export class ApiError extends Error {
   constructor(status, message, payload) {
     super(message);
@@ -116,7 +126,10 @@ export const api = {
     if (identity.apiKey) formData.append('api_key', identity.apiKey);
     return request('/upload-files', { method: 'POST', formData, headers: identityHeaders(identity) });
   },
-  addDocument: (payload) => request('/add-document', { method: 'POST', body: payload, headers: identityHeaders(payload) }),
+  addDocument: (payload) => {
+    const body = withKbIdAlias(payload);
+    return request('/add-document', { method: 'POST', body, headers: identityHeaders(body) });
+  },
   search: ({ query, collection = 'default', limit = 5, kbId, kbIds, scope, ...identity }) =>
     request('/search', {
       query: {
@@ -130,7 +143,10 @@ export const api = {
       },
       headers: identityHeaders(identity),
     }),
-  chat: (payload) => request('/chat', { method: 'POST', body: payload, headers: identityHeaders(payload) }),
+  chat: (payload) => {
+    const body = withKbIdAlias(payload);
+    return request('/chat', { method: 'POST', body, headers: identityHeaders(body) });
+  },
   listDocuments: ({ collection = 'default', limit = 100, offset = 0, filename, kbId, scope, ...identity }) =>
     request('/list-documents', {
       query: {
@@ -149,6 +165,12 @@ export const api = {
       query: { collection, kb_id: kbId, scope, ...identityQuery(identity) },
       headers: identityHeaders(identity),
     }),
-  deleteDocument: (payload) => request('/delete-document', { method: 'DELETE', body: payload, headers: identityHeaders(payload) }),
-  deleteFile: (payload) => request('/delete-file', { method: 'DELETE', body: payload, headers: identityHeaders(payload) }),
+  deleteDocument: (payload) => {
+    const body = withKbIdAlias(payload);
+    return request('/delete-document', { method: 'DELETE', body, headers: identityHeaders(body) });
+  },
+  deleteFile: (payload) => {
+    const body = withKbIdAlias(payload);
+    return request('/delete-file', { method: 'DELETE', body, headers: identityHeaders(body) });
+  },
 };
