@@ -1,41 +1,36 @@
 # MCP-RAG
 
-面向 AI 客户端的服务优先 RAG 服务。
+> ✨100% 由 AI 编写
 
-当前主形态是：
+面向 AI 客户端的服务优先 RAG 服务，当前以 FastAPI HTTP 服务和 Streamable HTTP MCP 端点为主。
+
+代码当前提供的是一个统一后端壳层：
 - FastAPI HTTP 服务
-- Streamable HTTP MCP 端点
-- 基于 Chroma 的多集合检索
-- HTTP / MCP 共用运行时、鉴权、限流、配额、观测与租户上下文
+- Streamable HTTP MCP
+- 共享运行时、配置热更新、鉴权、限流、配额、观测
+- 基于知识库注册表的检索与文档管理
 
-## 当前状态
+## 当前能力
 
-这版已经完成：
-- 正式 `RequestContext` / `TenantContext`
-- HTTP / MCP 统一生成标准化上下文
-- service 层统一消费标准化 context
-- 配置文件热更新
-- 首次运行没有配置文件也不会报错，并会在启动时写入默认配置
-- request-level retrieval cache
-- provider 级预算、熔断、fallback
-- `/health`、`/ready`、`/metrics`
-- 更细的 runtime readiness / dependency health
-- Streamable HTTP MCP smoke test
-- Chroma-backed 端到端测试
-
-当前仍然不是“生产平台级完成态”，还缺：
-- 分布式限流、缓存、provider budget 状态共享
-- 更正式的身份体系，例如 OIDC / workspace 级鉴权
-- 更完整的 tracing / log correlation / metrics export
-- collection 生命周期治理、后台任务和资源回收策略
+- 文档导入：支持直接添加文本，以及上传 `txt`、`md`、`pdf`、`docx`
+- 检索：向量检索 + 关键词检索融合
+- 问答：`/search`、`/chat`、MCP `rag_ask`
+- 多知识库：支持单知识库和 `kb_ids` 多知识库聚合检索/对话
+- 知识库作用域：`public` 和 `agent_private`
+- 租户上下文：`base_collection + user_id + agent_id`
+- 运行时治理：API key、内存限流、上传/索引配额、request-level retrieval cache
+- provider 治理：provider budget、熔断、fallback
+- 可观测性：`/health`、`/ready`、`/metrics`
+- 前端：内置单页管理面板 `/app`
 
 ## 架构
 
-当前主链路：
+主链路：
 
 ```text
 HTTP / MCP
   -> app_factory.py
+  -> http_server.py / mcp_server.py
   -> context.py
   -> service_facade.py
   -> services/
@@ -43,33 +38,19 @@ HTTP / MCP
        - indexing_service.py
        - retrieval_service.py
        - chat_service.py
+  -> knowledge_bases.py
   -> core/indexing/
   -> retrieval/
 ```
 
-关键模块：
-- `src/mcp_rag/main.py`: 服务启动入口
-- `src/mcp_rag/cli.py`: CLI 启服与初始化
-- `src/mcp_rag/http_server.py`: HTTP API 与 Streamable HTTP MCP 挂载
+关键文件：
+- `src/mcp_rag/cli.py`: CLI 入口，提供 `serve` 和 `init`
+- `src/mcp_rag/main.py`: HTTP 服务启动入口
+- `src/mcp_rag/http_server.py`: HTTP API、SPA 入口、Streamable HTTP MCP 挂载
 - `src/mcp_rag/mcp_server.py`: MCP 工具定义与 `rag_ask`
-- `src/mcp_rag/app_factory.py`: HTTP / MCP 共享运行时装配
-- `src/mcp_rag/shell_factory.py`: 向后兼容导出
-- `src/mcp_rag/context.py`: `RequestContext` / `TenantContext`
-- `src/mcp_rag/services/runtime.py`: provider、cache、readiness、热更新
-- `src/mcp_rag/services/retrieval_cache.py`: request-level retrieval cache
-
-## 主要能力
-
-- 文档上传、切分、入库
-- 向量检索 + 轻量关键词检索融合
-- `search` / `chat` / MCP `rag_ask`
-- `collection + user_id + agent_id` 的 tenant 隔离
-- API key 鉴权
-- 进程内 rate limit
-- 上传 / 索引配额
-- request-level retrieval cache
-- provider-side budget、熔断、fallback
-- readiness / health / metrics
+- `src/mcp_rag/app_factory.py`: 统一装配 app context、runtime、guardrails
+- `src/mcp_rag/knowledge_bases.py`: 知识库注册表与默认知识库解析
+- `src/mcp_rag/config.py`: 配置模型、JSON/SQLite 持久化、热更新
 
 ## 环境要求
 
@@ -78,19 +59,19 @@ HTTP / MCP
 
 ## 安装
 
-发布版用户可以直接安装 CLI：
+安装 CLI：
 
 ```bash
 uv tool install mcp-rag
 ```
 
-安装完成后可以直接运行：
+安装后直接运行：
 
 ```bash
 mcp-rag serve
 ```
 
-如果你是在本仓库里开发：
+在仓库里开发：
 
 ```bash
 uv sync
@@ -102,26 +83,17 @@ uv sync
 uv sync --extra local-embeddings
 ```
 
-这里有一个边界要明确：
+边界说明：
 - 使用 `uv tool install mcp-rag` 的安装用户不需要 Node.js，也不需要 `pnpm`
-- `pnpm` 只用于维护前端时的开发构建，不是服务运行时依赖
+- `pnpm` 只用于维护前端构建，不是服务运行时依赖
 
-## 启动
+## 启动与初始化
+
+启动服务：
 
 ```bash
 uv run mcp-rag serve
 ```
-
-默认端口是 `8060`。
-
-常用入口：
-- 管理面板：`http://127.0.0.1:8060/app`
-- Swagger：`http://127.0.0.1:8060/docs`
-- MCP 端点：`http://127.0.0.1:8060/mcp`
-
-兼容入口：
-- `/documents-page` 会重定向到 `/app/documents`
-- `/config-page` 会重定向到 `/app/config`
 
 初始化数据目录：
 
@@ -129,19 +101,34 @@ uv run mcp-rag serve
 uv run mcp-rag init --data-dir ./data
 ```
 
+默认端口是 `8060`，服务默认监听 `0.0.0.0:8060`。
+
+常用入口：
+- 管理面板：`http://127.0.0.1:8060/app`
+- API 文档：`http://127.0.0.1:8060/docs`
+- MCP 端点：`http://127.0.0.1:8060/mcp`
+
+兼容入口：
+- `/` 会重定向到 `/app`
+- `/doc` 会重定向到 `/docs`
+- `/documents-page` 会重定向到 `/app/documents`
+- `/config-page` 会重定向到 `/app/config`
+
 首次启动行为：
-- 如果 `./data/config.json` 不存在，服务不会报错
-- 启动阶段会自动写入默认配置
-- `ConfigManager.reload_if_changed()` 会在运行中拾取外部配置变更
+- 如果 `./data/config.json` 不存在，读取配置时会先使用默认值
+- 服务启动时会调用 `ensure_config_file()`，把默认配置写入磁盘
+- 数据目录中的 `./data/chroma` 和相关 SQLite 文件会按需创建
 
 ## 前端与静态资源
 
-当前 Python 包会把 `src/mcp_rag/static/` 下的静态文件一并打进 wheel / sdist。
+发布包会把 `src/mcp_rag/static/` 一并打进 wheel / sdist。
 
 这意味着：
-- 如果你是安装用户，`uv tool install mcp-rag` 后直接运行即可，不需要单独处理前端构建
-- 如果你在维护前端，需要在发版前把构建产物放到 `src/mcp_rag/static/`
-- 前端开发构建应使用 `pnpm`，但不要把 Node 作为安装用户的前置条件
+- 安装用户运行 `uv tool install mcp-rag` 后可以直接访问 `/app`
+- 不需要单独构建前端，也不需要 Node.js
+- 前端维护者需要在发版前生成最新静态资源
+
+前端源码在 `frontend/`，构建输出到 `src/mcp_rag/static/app`。
 
 典型流程：
 
@@ -151,11 +138,24 @@ pnpm install
 pnpm build
 ```
 
-发版前需要确认前端构建产物的输出目录就是 `src/mcp_rag/static/`，否则安装包里不会带上对应页面资源。
+## 知识库模型
+
+当前项目不再只靠裸 `collection` 组织数据，而是以知识库注册表为主。
+
+知识库特性：
+- 持久化注册表在 `knowledge_base_db_path` 指向的 SQLite 文件中
+- 默认会确保存在一个公共知识库
+- 当传入 `user_id + agent_id` 时，会确保存在对应的默认 `agent_private` 知识库
+- 新建知识库后会分配稳定的内部集合名，例如 `kb_<id>`
+
+接口层仍然保留 `collection` 参数，原因是需要兼容旧调用方式。当前实际行为是：
+- 可以显式传 `kb_id`
+- 也可以继续传旧 `collection`
+- 服务会把请求解析到具体知识库和实际集合名
 
 ## HTTP 接口
 
-基础接口：
+系统接口：
 - `GET /health`
 - `GET /ready`
 - `GET /metrics`
@@ -165,26 +165,46 @@ pnpm build
 - `POST /config`
 - `POST /config/bulk`
 - `POST /config/reset`
+- `POST /config/reload`
 
-RAG 接口：
+服务商接口：
+- `GET /providers/{provider}/models`
+
+知识库接口：
+- `GET /collections`
+- `GET /knowledge-bases`
+- `POST /knowledge-bases`
+
+文档接口：
 - `POST /add-document`
 - `POST /upload-files`
-- `GET /collections`
-- `GET /search`
-- `POST /chat`
 - `GET /list-documents`
 - `DELETE /delete-document`
 - `GET /list-files`
 - `DELETE /delete-file`
 
-如果启用了安全策略，可以通过以下方式传 API key：
+检索与问答：
+- `GET /search`
+- `POST /chat`
+
+MCP 调试接口：
+- `GET /debug/mcp/tools`
+- `POST /debug/mcp/call`
+
+几点需要明确：
+- `/search` 和 `/chat` 支持 `kb_id`
+- `/search` 和 `/chat` 也支持 `kb_ids` 做多知识库聚合
+- `/upload-files` 使用 `multipart/form-data`
+- `/delete-document` 和 `/delete-file` 通过请求体传删除参数
+
+如果启用了安全策略，API key 可以通过以下方式传入：
 - HTTP Header: `x-api-key`
 - Header: `Authorization: Bearer <token>`
-- 查询参数或 body/form 中的 `api_key`
+- 查询参数、JSON body 或 form 中的 `api_key`
 
 ## MCP
 
-当前主要面向 Streamable HTTP MCP：
+当前主形态是 Streamable HTTP MCP：
 
 ```json
 {
@@ -196,8 +216,23 @@ RAG 接口：
 }
 ```
 
-支持的 MCP 工具：
+已实现的 MCP 工具：
 - `rag_ask`
+
+`rag_ask` 主要参数：
+- `query`
+- `mode`: `raw` 或 `summary`
+- `collection`
+- `kb_id`
+- `scope`
+- `limit`
+- `threshold`
+- `tenant`
+- `user_id` / `agent_id`
+- `_user_id` / `_agent_id`
+- `api_key`
+- `request_id`
+- `trace_id`
 
 示例：
 
@@ -206,57 +241,49 @@ RAG 接口：
   "name": "rag_ask",
   "arguments": {
     "query": "FastAPI 是什么",
-    "collection": "default",
+    "kb_id": 1,
     "mode": "summary",
     "limit": 5
   }
 }
 ```
 
-如果启用了安全策略，MCP 工具调用可以传：
-
-```json
-{
-  "api_key": "your-token"
-}
-```
-
-## Request Context 与 Tenant
-
-标准请求上下文字段在 `src/mcp_rag/context.py`：
-- `tenant.base_collection`
-- `tenant.user_id`
-- `tenant.agent_id`
-- `tenant.tenant_key`
-- `transport`
-- `operation`
-- `api_key`
-- `request_id`
-- `trace_id`
-- `subject`
-- `rate_limit_subject`
-- `quota_subject`
-
-兼容输入：
-- `collection`
-- `tenant`
-- `user_id` / `agent_id`
-- `_user_id` / `_agent_id`
-
-service 层不再自己拼 tenant / request 身份，而是统一消费标准化后的 context。
-
 ## 配置
 
-配置文件默认在：
+默认配置文件：
 
 ```text
 ./data/config.json
 ```
 
-当前治理相关配置示例：
+默认知识库数据库：
+
+```text
+./data/knowledge_bases.sqlite3
+```
+
+当前配置有一个重要变化：
+- 普通运行配置保存在 `config.json`
+- provider 相关配置会持久化到 SQLite，而不是继续完整写回 `config.json`
+
+也就是说，这些字段会存到 SQLite 中的 `service_provider_settings`：
+- `embedding_provider`
+- `embedding_fallback_provider`
+- `provider_configs`
+- `llm_provider`
+- `llm_fallback_provider`
+- `llm_model`
+- `llm_base_url`
+- `llm_api_key`
+
+其余配置仍然保存在 `config.json`，例如：
 
 ```json
 {
+  "http_port": 8060,
+  "chroma_persist_directory": "./data/chroma",
+  "knowledge_base_db_path": "./data/knowledge_bases.sqlite3",
+  "enable_llm_summary": false,
   "security": {
     "enabled": false,
     "allow_anonymous": true,
@@ -281,45 +308,35 @@ service 层不再自己拼 tenant / request 身份，而是统一消费标准化
     "max_entries": 256,
     "ttl_seconds": 300
   },
-  "observability": {
-    "warning_error_rate": 0.05,
-    "critical_error_rate": 0.2,
-    "slow_request_ms": 1000.0,
-    "latency_window_size": 512
-  },
   "provider_budget": {
-    "enabled": true,
-    "embeddings": {
-      "requests_per_window": 300,
-      "window_seconds": 60,
-      "burst": 60,
-      "failure_threshold": 3,
-      "cooldown_seconds": 30
-    },
-    "llm": {
-      "requests_per_window": 120,
-      "window_seconds": 60,
-      "burst": 20,
-      "failure_threshold": 3,
-      "cooldown_seconds": 30
-    }
+    "enabled": true
   }
 }
 ```
 
+当前内置 provider 相关能力：
+- embedding provider 默认值是 `zhipu`
+- LLM provider 默认值是 `doubao`
+- 内置 provider 配置包含 `doubao`、`zhipu`、`aliyun`
+- `qwen` / `dashscope` 会规范化为 `aliyun`
+- `/providers/{provider}/models` 支持从兼容 OpenAI 的模型服务拉取模型列表
+- 本地 embedding 支持 `m3e-small` 和 `e5-small`
+- LLM 额外支持 `ollama`
+
+## 热更新与运行时刷新
+
 热更新行为：
-- 通过 `/config`、`/config/bulk`、`/config/reset` 修改后，运行时会同步刷新
-- 外部直接改写配置文件后，会在请求路径上通过 `reload_if_changed()` 自动拾取
-- provider、retrieval cache、guardrails 会按配置签名重新装配或失效
+- 通过 `/config`、`/config/bulk`、`/config/reset`、`/config/reload` 修改后，运行时会立即刷新
+- 请求进入时会通过 `reload_if_changed()` 检测磁盘配置是否变化
+- provider 设置或检索配置变化后，会重建相关运行时依赖并清理检索缓存
 
 ## Readiness 与 Metrics
 
-- `/health` 返回整体健康摘要、错误率、慢操作和 runtime 快照
-- `/ready` 在 runtime 依赖未就绪或配置缺失时返回 `503`
-- `/metrics` 返回按 operation / provider 聚合的指标
-- 观测输出包含 `p50 / p95 / p99`
+- `/health` 返回健康摘要、运行时快照和 `config_revision`
+- `/ready` 在未完成 bootstrap 或关键依赖未就绪时返回 `503`
+- `/metrics` 返回按 operation / provider 聚合的观测指标
 
-当前 readiness 会显式暴露：
+当前 readiness 快照会包含：
 - `document_processor`
 - `embedding_model`
 - `vector_store`
@@ -343,23 +360,13 @@ uv run python -m compileall src
 ```
 
 当前测试覆盖：
-- `RequestContext` / `TenantContext`
-- 配置热更新与首次启动默认配置
+- 配置默认值、磁盘重载与 provider 配置迁移
+- HTTP 壳层与 MCP 壳层行为
+- request context / tenant 解析
 - request-level retrieval cache
 - provider budget / fallback
 - readiness / health / metrics
-- HTTP / MCP 壳层行为
-- Streamable HTTP MCP smoke
-- 基于临时 Chroma 的端到端集成测试
-- 打包元数据与安装说明检查
-
-## 后续建议
-
-如果继续往生产平台推进，优先建议做：
-- 外部缓存与分布式限流
-- 更正式的租户与身份接入层
-- tracing 导出与 metrics backend
-- collection 生命周期与异步索引任务
+- 打包元数据与静态资源
 
 ## 许可证
 
