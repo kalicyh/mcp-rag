@@ -1728,7 +1728,6 @@
     workspaceManageKnowledgeBase = value;
     workspaceManageKnowledgeBaseName = kb?.name || '';
     workspacePreviewFilename = '';
-    previewDocument = null;
     workspaceUploadKnowledgeBase = value;
     selectedKnowledgeBase = value;
     documentKnowledgeBase = value;
@@ -1746,7 +1745,6 @@
   function backToWorkspaceLibrary() {
     workspaceMode = 'library';
     workspacePreviewFilename = '';
-    previewDocument = null;
     syncLocation('workspace');
     writeState();
   }
@@ -2157,10 +2155,6 @@
     refreshDocuments();
   }
 
-  function openDocumentPreview(doc) {
-    previewDocument = doc;
-  }
-
   async function openWorkspaceFilePreview(file) {
     if (!workspaceManageKnowledgeBase || !file?.filename) return;
     try {
@@ -2185,7 +2179,6 @@
     });
     const docs = result?.documents ?? [];
     if (!docs.length) {
-      previewDocument = null;
       if (!silent) {
         pushToast('暂无可预览内容', '这个文件当前还没有可查看的文本内容。', 'warning');
       }
@@ -2202,10 +2195,6 @@
         filename: workspacePreviewFilename,
       },
     };
-  }
-
-  function closeDocumentPreview() {
-    previewDocument = null;
   }
 
   async function saveConfig({ silent = false, refresh = true } = {}) {
@@ -2736,7 +2725,7 @@
             fill={true}
           >
             {#if previewDocument}
-              <pre class="document-preview workspace-document-preview-page">{previewDocument.content || '该片段没有内容。'}</pre>
+              <pre class="document-preview workspace-document-preview-page">{previewDocument.content || '该文件暂无可预览内容。'}</pre>
               <div class="workspace-kb-filing">
                 <span>知识记录数 {workspaceDocumentsTotal}</span>
               </div>
@@ -3169,7 +3158,6 @@
                         {safeText(doc.metadata?.filename, 'manual')}{doc.metadata?.timestamp ? ` · ${formatTime(doc.metadata.timestamp)}` : ''}
                       </span>
                       <span class="card-actions">
-                        <button class="button secondary" on:click={() => openDocumentPreview(doc)}>查看内容</button>
                         <button class="button danger" on:click={() => deleteDocument(doc.id)}>删除</button>
                       </span>
                     </div>
@@ -3702,35 +3690,6 @@
 
   </main>
 </div>
-
-{#if previewDocument && activeSection !== 'workspace'}
-  <div class="modal-backdrop" role="presentation" on:click={closeDocumentPreview}>
-    <div
-      class="modal-card"
-      role="dialog"
-      aria-modal="true"
-      aria-label="片段内容"
-      tabindex="-1"
-      on:click|stopPropagation
-      on:keydown={(event) => event.key === 'Escape' && closeDocumentPreview()}
-    >
-      <div class="modal-card__header">
-        <div>
-          <h3>片段内容</h3>
-          <p>{safeText(previewDocument.metadata?.filename, 'manual')}{previewDocument.metadata?.timestamp ? ` · ${formatTime(previewDocument.metadata.timestamp)}` : ''}</p>
-        </div>
-        <button class="button ghost" type="button" on:click={closeDocumentPreview}>关闭</button>
-      </div>
-      <div class="modal-card__meta">
-        <span class="provider-model-pill mono">{previewDocument.id}</span>
-        {#if previewDocument.metadata?.collection_variant}
-          <span class="provider-model-pill">{previewDocument.metadata.collection_variant}</span>
-        {/if}
-      </div>
-      <pre class="document-preview">{previewDocument.content || '该片段没有内容。'}</pre>
-    </div>
-  </div>
-{/if}
 
 {#if workspaceCreateDialogOpen}
   <div class="modal-backdrop" role="presentation" on:click={closeWorkspaceCreateDialog}>
