@@ -15,6 +15,11 @@ function buildUrl(path, query = {}) {
   const url = new URL(base, window.location.origin);
   for (const [key, value] of Object.entries(query)) {
     if (value === undefined || value === null || value === '') continue;
+    if (Array.isArray(value)) {
+      if (!value.length) continue;
+      url.searchParams.set(key, value.join(','));
+      continue;
+    }
     url.searchParams.set(key, String(value));
   }
   return url.toString();
@@ -112,13 +117,14 @@ export const api = {
     return request('/upload-files', { method: 'POST', formData, headers: identityHeaders(identity) });
   },
   addDocument: (payload) => request('/add-document', { method: 'POST', body: payload, headers: identityHeaders(payload) }),
-  search: ({ query, collection = 'default', limit = 5, kbId, scope, ...identity }) =>
+  search: ({ query, collection = 'default', limit = 5, kbId, kbIds, scope, ...identity }) =>
     request('/search', {
       query: {
         query,
         collection,
         limit,
         kb_id: kbId,
+        kb_ids: kbIds,
         scope,
         ...identityQuery(identity),
       },

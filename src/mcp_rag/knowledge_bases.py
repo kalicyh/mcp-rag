@@ -300,8 +300,8 @@ class KnowledgeBaseService:
             owner_user_id = None
             owner_agent_id = None
         if resolved_scope == _AGENT_PRIVATE_SCOPE:
-            if owner_user_id is None or owner_agent_id is None:
-                raise ValueError("agent_private knowledge bases require owner_user_id and owner_agent_id")
+            if owner_user_id is None:
+                raise ValueError("agent_private knowledge bases require owner_user_id")
         return self.store.create(
             name=name,
             scope=resolved_scope,

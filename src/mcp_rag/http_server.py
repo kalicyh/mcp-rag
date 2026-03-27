@@ -1,5 +1,6 @@
 """HTTP server for MCP-RAG configuration and document management."""
 
+import asyncio
 from contextlib import asynccontextmanager
 import logging
 from pathlib import Path
@@ -17,7 +18,7 @@ except ImportError:  # pragma: no cover - optional dependency guard
     httpx = None
 
 from .config import canonical_provider_name, config_manager
-from .contracts import ChatRequest, DocumentRequest, SearchRequest, normalize_tenant
+from .contracts import ChatRequest, ChatResponse, DocumentRequest, SearchRequest, SearchResponse, SearchResultView, normalize_tenant
 from .knowledge_bases import KnowledgeBaseAccessError
 from .shell_factory import (
     build_http_request_context,
@@ -321,8 +322,8 @@ def _resolve_request_knowledge_base(
         )
     except KnowledgeBaseAccessError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
-    effective_user_id = user_id if resolution.scope == "agent_private" else None
-    effective_agent_id = agent_id if resolution.scope == "agent_private" else None
+    effective_user_id = resolution.knowledge_base.owner_user_id if resolution.scope == "agent_private" else None
+    effective_agent_id = resolution.knowledge_base.owner_agent_id if resolution.scope == "agent_private" else None
     tenant = normalize_tenant(
         base_collection=resolution.name,
         user_id=effective_user_id,
@@ -343,6 +344,141 @@ def _resolve_request_knowledge_base(
         subject=request_subject(request, tenant, fallback=f"{operation}:{resolution.collection_name}"),
     )
     return resolution, request_context
+
+
+def _parse_kb_ids(raw_value: Any) -> list[int]:
+    if raw_value is None or raw_value == "":
+        return []
+    if isinstance(raw_value, list):
+        values = raw_value
+    else:
+        values = str(raw_value).split(",")
+    parsed: list[int] = []
+    for item in values:
+        try:
+            value = int(str(item).strip())
+        except (TypeError, ValueError):
+            continue
+        if value not in parsed:
+            parsed.append(value)
+    return parsed
+
+
+async def _search_across_knowledge_bases(
+    *,
+    request: Request,
+    service,
+    query: str,
+    collection: str,
+    kb_ids: list[int],
+    scope: str | None,
+    limit: int,
+    user_id: int | None,
+    agent_id: int | None,
+    api_key: str | None,
+    operation: str,
+) -> tuple[list[Any], SearchResponse]:
+    contexts = [
+        _resolve_request_knowledge_base(
+            request,
+            kb_id=kb_id,
+            scope=scope,
+            collection=collection,
+            user_id=user_id,
+            agent_id=agent_id,
+            api_key=api_key,
+            operation=operation,
+        )[1]
+        for kb_id in kb_ids
+    ]
+    if contexts:
+        enforce_http_guardrails(request, request_context=contexts[0])
+    responses = await asyncio.gather(
+        *[
+            service.search(
+                SearchRequest(
+                    query=query,
+                    collection=request_context.kb_name or collection,
+                    limit=limit,
+                    kb_id=request_context.kb_id,
+                    scope=request_context.kb_scope,
+                    tenant=request_context.tenant,
+                    context=request_context,
+                )
+            )
+            for request_context in contexts
+        ]
+    )
+
+    merged_results: list[SearchResultView] = []
+    for response, request_context in zip(responses, contexts):
+        for item in response.results:
+            metadata = dict(item.metadata or {})
+            metadata.setdefault("knowledge_base_id", request_context.kb_id)
+            metadata.setdefault("knowledge_base_name", request_context.kb_name)
+            metadata.setdefault("knowledge_base_scope", request_context.kb_scope)
+            metadata.setdefault("owner_user_id", request_context.tenant.user_id)
+            metadata.setdefault("owner_agent_id", request_context.tenant.agent_id)
+            merged_results.append(
+                SearchResultView(
+                    content=item.content,
+                    score=item.score,
+                    vector_score=item.vector_score,
+                    keyword_score=item.keyword_score,
+                    metadata=metadata,
+                    source=item.source,
+                    filename=item.filename,
+                    retrieval_method=item.retrieval_method,
+                )
+            )
+    merged_results.sort(key=lambda item: item.score, reverse=True)
+    merged_results = merged_results[:limit]
+
+    summary = None
+    if merged_results and getattr(service.runtime.settings, "enable_llm_summary", False):
+        try:
+            llm_model = await service.runtime.ensure_llm_model()
+            summary_context = "\n\n".join(
+                f"知识库 {item.metadata.get('knowledge_base_name', '未知')} · 文档 {index + 1} (相似度: {item.score:.3f}):\n{item.content}"
+                for index, item in enumerate(merged_results)
+            )
+            summary = await llm_model.summarize(summary_context, query)
+        except Exception as exc:
+            logger.warning("LLM summary failed for multi-kb search, falling back to raw results: %s", exc)
+
+    return contexts, SearchResponse(
+        query=query,
+        collection="multi_kb",
+        results=merged_results,
+        summary=summary,
+    )
+
+
+def _format_chat_context(results: list[SearchResultView]) -> str:
+    return "\n\n".join(
+        f"知识库 {item.metadata.get('knowledge_base_name', '未知')} / 文档 {index + 1} ({item.filename or item.source}):\n{item.content}"
+        for index, item in enumerate(results)
+    )
+
+
+def _build_chat_prompt(query: str, context: str) -> str:
+    return (
+        "基于以下知识库内容回答用户的问题。如果知识库内容不足以回答问题，请说明无法找到相关信息。\n\n"
+        f"知识库内容:\n{context}\n\n"
+        f"用户问题: {query}\n\n"
+        "请提供准确、简洁的回答:"
+    )
+
+
+def _format_llm_fallback_response(context: str, error: Exception) -> str:
+    detail = str(error).strip() or error.__class__.__name__
+    return (
+        "### Retrieved Context\n\n"
+        f"{context}\n\n"
+        "### Note\n"
+        "LLM is not available. The above context was retrieved for your query.\n\n"
+        f"LLM error: {detail}"
+    )
 
 
 @app.get("/")
@@ -749,37 +885,70 @@ async def chat_with_knowledge_base(chat_request: dict, request: Request):
     query = chat_request.get("query", "")
     collection = chat_request.get("collection", "default")
     kb_id = chat_request.get("kb_id")
+    kb_ids = _parse_kb_ids(chat_request.get("kb_ids"))
     scope = chat_request.get("scope")
     limit = int(chat_request.get("limit", 5) or 5)
-    _, request_context = _resolve_request_knowledge_base(
-        request,
-        kb_id=kb_id,
-        scope=scope,
-        collection=collection,
-        user_id=chat_request.get("user_id"),
-        agent_id=chat_request.get("agent_id"),
-        api_key=chat_request.get("api_key"),
-        operation="chat",
-    )
+    user_id = chat_request.get("user_id")
+    agent_id = chat_request.get("agent_id")
+    api_key = chat_request.get("api_key")
 
     if not query:
         raise HTTPException(status_code=400, detail="Query is required")
 
     context = request.app.state.shell_context
     async with context.observability.timer("chat"):
-        enforce_http_guardrails(request, request_context=request_context)
         service = await get_rag_service(request)
-        response = await service.chat(
-            ChatRequest(
+        if kb_ids:
+            contexts, search_response = await _search_across_knowledge_bases(
+                request=request,
+                service=service,
                 query=query,
-                collection=request_context.kb_name or collection,
+                collection=collection,
+                kb_ids=kb_ids,
+                scope=scope,
                 limit=limit,
-                kb_id=request_context.kb_id,
-                scope=request_context.kb_scope,
-                tenant=request_context.tenant,
-                context=request_context,
+                user_id=user_id,
+                agent_id=agent_id,
+                api_key=api_key,
+                operation="chat",
             )
-        )
+            context_text = _format_chat_context(search_response.results)
+            prompt = _build_chat_prompt(query, context_text)
+            try:
+                llm_model = await service.runtime.ensure_llm_model()
+                answer = await llm_model.generate(prompt)
+            except Exception as exc:
+                logger.warning("LLM generation failed for multi-kb chat, using retrieval context fallback: %s", exc)
+                answer = _format_llm_fallback_response(context_text, exc)
+            response = ChatResponse(
+                query=query,
+                collection="multi_kb",
+                response=answer,
+                sources=search_response.results,
+            )
+        else:
+            _, request_context = _resolve_request_knowledge_base(
+                request,
+                kb_id=kb_id,
+                scope=scope,
+                collection=collection,
+                user_id=user_id,
+                agent_id=agent_id,
+                api_key=api_key,
+                operation="chat",
+            )
+            enforce_http_guardrails(request, request_context=request_context)
+            response = await service.chat(
+                ChatRequest(
+                    query=query,
+                    collection=request_context.kb_name or collection,
+                    limit=limit,
+                    kb_id=request_context.kb_id,
+                    scope=request_context.kb_scope,
+                    tenant=request_context.tenant,
+                    context=request_context,
+                )
+            )
     return response.to_dict()
 
 @app.get("/search")
@@ -788,6 +957,7 @@ async def search_documents(
     query: str,
     collection: str = "default",
     kb_id: Optional[int] = None,
+    kb_ids: Optional[str] = None,
     scope: Optional[str] = None,
     limit: int = 5,
     user_id: Optional[int] = None,
@@ -796,31 +966,47 @@ async def search_documents(
 ):
     """Search documents."""
     logger.info("Searching for '%s' in collection '%s'", query, collection)
-    _, request_context = _resolve_request_knowledge_base(
-        request,
-        kb_id=kb_id,
-        scope=scope,
-        collection=collection,
-        user_id=user_id,
-        agent_id=agent_id,
-        api_key=api_key,
-        operation="search",
-    )
+    parsed_kb_ids = _parse_kb_ids(kb_ids)
     context = request.app.state.shell_context
     async with context.observability.timer("search"):
-        enforce_http_guardrails(request, request_context=request_context)
         service = await get_rag_service(request)
-        response = await service.search(
-            SearchRequest(
+        if parsed_kb_ids:
+            contexts, response = await _search_across_knowledge_bases(
+                request=request,
+                service=service,
                 query=query,
-                collection=request_context.kb_name or collection,
+                collection=collection,
+                kb_ids=parsed_kb_ids,
+                scope=scope,
                 limit=limit,
-                kb_id=request_context.kb_id,
-                scope=request_context.kb_scope,
-                tenant=request_context.tenant,
-                context=request_context,
+                user_id=user_id,
+                agent_id=agent_id,
+                api_key=api_key,
+                operation="search",
             )
-        )
+        else:
+            _, request_context = _resolve_request_knowledge_base(
+                request,
+                kb_id=kb_id,
+                scope=scope,
+                collection=collection,
+                user_id=user_id,
+                agent_id=agent_id,
+                api_key=api_key,
+                operation="search",
+            )
+            enforce_http_guardrails(request, request_context=request_context)
+            response = await service.search(
+                SearchRequest(
+                    query=query,
+                    collection=request_context.kb_name or collection,
+                    limit=limit,
+                    kb_id=request_context.kb_id,
+                    scope=request_context.kb_scope,
+                    tenant=request_context.tenant,
+                    context=request_context,
+                )
+            )
     return response.to_dict()
 
 @app.get("/list-documents")

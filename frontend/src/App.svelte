@@ -7,8 +7,9 @@
 
   const STORAGE_KEY = 'mcp-rag-dashboard-state';
   const sections = [
+    { id: 'workspace', title: '用户工作台', subtitle: '用户上传与问答' },
     { id: 'overview', title: '总览', subtitle: '状态和指标' },
-    { id: 'documents', title: '文档管理', subtitle: '上传、检索、删除' },
+    { id: 'documents', title: '文档管理', subtitle: '系统级导入、检索、删除' },
     { id: 'mcp', title: 'MCP 调试', subtitle: '工具与调用' },
     { id: 'config', title: '配置中心', subtitle: '配置和策略' },
   ];
@@ -16,6 +17,10 @@
     { id: 'ingest', title: '导入' },
     { id: 'search', title: '检索' },
     { id: 'manage', title: '管理' },
+  ];
+  const workspaceModes = [
+    { id: 'library', title: '知识库管理' },
+    { id: 'debug', title: '检索调试' },
   ];
   const configModes = [
     { id: 'provider', title: '服务商配置' },
@@ -170,6 +175,7 @@
     'llm_api_key',
   ]);
   const routeSectionMap = {
+    workspace: 'workspace',
     overview: 'overview',
     documents: 'documents',
     mcp: 'mcp',
@@ -564,6 +570,7 @@
   }
 
   let activeSection = 'overview';
+  let workspaceMode = 'library';
   let documentMode = 'ingest';
   let configMode = 'provider';
   let providerEditor = 'doubao';
@@ -577,11 +584,27 @@
   let queuedFiles = [];
   let identity = emptyContext();
   let knowledgeBases = [];
+  let workspaceOwnedKnowledgeBases = [];
+  let workspaceDebugKnowledgeBases = [];
   let selectedKnowledgeBase = '';
   let documentKnowledgeBase = '';
   let searchKnowledgeBase = '';
   let chatKnowledgeBase = '';
   let manageKnowledgeBase = '';
+  let workspaceUploadKnowledgeBase = '';
+  let workspaceKnowledgeBaseSelections = [];
+  let workspaceManageKnowledgeBase = '';
+  let workspaceCreateDialogOpen = false;
+  let workspaceCreateBusy = false;
+  let workspaceCreateName = '';
+  let workspaceCreateAgentId = '';
+  let workspaceManageBusy = false;
+  let workspaceManagedPage = 0;
+  let workspaceManagedPageSize = 8;
+  let workspaceFileFilter = '';
+  let workspaceDocuments = [];
+  let workspaceFiles = [];
+  let workspaceDocumentsTotal = 0;
   let fileFilter = '';
   let uploadBusy = false;
   let addBusy = false;
@@ -623,6 +646,10 @@
   let loading = true;
   let autoSaveQueued = false;
   let autoSaveRunning = false;
+  let workspaceAutoRefreshTimer = null;
+  let workspaceAutoRefreshSignature = '';
+  let knowledgeBasesRefreshToken = 0;
+  let hasMounted = false;
 
   function pushToast(title, message = '', tone = 'info') {
     const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -650,7 +677,10 @@
   function knowledgeBaseLabel(item) {
     if (!item) return '未选择知识库';
     if (item.scope === 'public') return `公共 · ${item.name}`;
-    return `Agent ${item.owner_agent_id ?? '-'} · ${item.name}`;
+    if (item.owner_agent_id === null || item.owner_agent_id === undefined) {
+      return `未绑定 Agent · ${item.name}`;
+    }
+    return `Agent ${item.owner_agent_id} · ${item.name}`;
   }
 
   function knowledgeBaseOptions() {
@@ -658,6 +688,116 @@
       value: String(item.id),
       label: knowledgeBaseLabel(item),
     }));
+  }
+
+  function privateKnowledgeBaseOptions() {
+    return knowledgeBases
+      .filter((item) => item?.scope === 'agent_private')
+      .map((item) => ({
+        value: String(item.id),
+        label: knowledgeBaseLabel(item),
+      }));
+  }
+
+  function agentOptions() {
+    const values = Array.from(
+      new Set(
+        knowledgeBases
+          .map((item) => item?.owner_agent_id)
+          .filter((value) => value !== null && value !== undefined && value !== '')
+          .map((value) => String(value))
+      )
+    );
+    if (identity.agentId && !values.includes(String(identity.agentId))) {
+      values.unshift(String(identity.agentId));
+    }
+    return values.map((value) => ({
+      value,
+      label: `Agent ${value}`,
+    }));
+  }
+
+  function selectedWorkspaceKnowledgeBases() {
+    return workspaceKnowledgeBaseSelections
+      .map((value) => knowledgeBaseById(value))
+      .filter(Boolean);
+  }
+
+  function userOwnedKnowledgeBases() {
+    return knowledgeBases.filter((item) => item?.scope === 'agent_private');
+  }
+
+  function bookshelfKnowledgeBases() {
+    return userOwnedKnowledgeBases().sort((left, right) => {
+      if ((left.owner_agent_id ?? null) === null && (right.owner_agent_id ?? null) !== null) return -1;
+      if ((left.owner_agent_id ?? null) !== null && (right.owner_agent_id ?? null) === null) return 1;
+      return String(left.name || '').localeCompare(String(right.name || ''), 'zh-CN');
+    });
+  }
+
+  function debugKnowledgeBases() {
+    const userId = identity.userId ? Number(identity.userId) : null;
+    const agentId = identity.agentId ? Number(identity.agentId) : null;
+    return knowledgeBases.filter((item) => {
+      if (item?.scope === 'public') return true;
+      if (!userId || Number(item?.owner_user_id) !== userId) return false;
+      if (item?.owner_agent_id === null || item?.owner_agent_id === undefined) return true;
+      return agentId !== null && Number(item.owner_agent_id) === agentId;
+    });
+  }
+
+  function knowledgeBaseScopeBadge(item) {
+    if (!item) return '未知';
+    if (item.scope === 'public') return '系统公开';
+    if (item.owner_agent_id === null || item.owner_agent_id === undefined) return '用户未绑定';
+    return `绑定 Agent ${item.owner_agent_id}`;
+  }
+
+  function selectedWorkspaceKnowledgeBase() {
+    return knowledgeBaseById(workspaceManageKnowledgeBase);
+  }
+
+  function sortKnowledgeBases(items) {
+    return [...items].sort((left, right) => {
+      const leftPublic = left?.scope === 'public' ? 0 : 1;
+      const rightPublic = right?.scope === 'public' ? 0 : 1;
+      if (leftPublic !== rightPublic) return leftPublic - rightPublic;
+      const nameCompare = String(left?.name || '').localeCompare(String(right?.name || ''), 'zh-CN');
+      if (nameCompare !== 0) return nameCompare;
+      return Number(left?.id || 0) - Number(right?.id || 0);
+    });
+  }
+
+  function upsertKnowledgeBase(item) {
+    if (!item?.id) return;
+    const targetId = Number(item.id);
+    const nextItems = knowledgeBases.filter((entry) => Number(entry?.id) !== targetId);
+    nextItems.push(item);
+    knowledgeBases = sortKnowledgeBases(nextItems);
+  }
+
+  function workspaceKnowledgeBaseSummary() {
+    const selected = selectedWorkspaceKnowledgeBases();
+    if (!selected.length) return '未选择知识库';
+    if (selected.length === 1) return knowledgeBaseLabel(selected[0]);
+    return `已选择 ${selected.length} 个知识库`;
+  }
+
+  function toggleWorkspaceKnowledgeBase(value) {
+    const nextValue = String(value);
+    if (workspaceKnowledgeBaseSelections.includes(nextValue)) {
+      workspaceKnowledgeBaseSelections = workspaceKnowledgeBaseSelections.filter((item) => item !== nextValue);
+    } else {
+      workspaceKnowledgeBaseSelections = [...workspaceKnowledgeBaseSelections, nextValue];
+    }
+    writeState();
+  }
+
+  function setWorkspaceKnowledgeBases(values) {
+    workspaceKnowledgeBaseSelections = Array.from(new Set((values || []).map((item) => String(item)))).filter((value) =>
+      knowledgeBaseById(value)
+    );
+    writeState();
   }
 
   function knowledgeBaseRequest(selection) {
@@ -676,6 +816,7 @@
       if (!raw) return;
       const parsed = JSON.parse(raw);
       if (parsed.activeSection) activeSection = routeSectionMap[parsed.activeSection] || parsed.activeSection;
+      if (parsed.workspaceMode) workspaceMode = parsed.workspaceMode;
       if (parsed.documentMode) documentMode = parsed.documentMode;
       if (parsed.configMode) configMode = parsed.configMode;
       if (parsed.identity) identity = normalizeIdentity(parsed.identity);
@@ -684,6 +825,11 @@
       if (parsed.chatKnowledgeBase) chatKnowledgeBase = parsed.chatKnowledgeBase;
       if (parsed.manageKnowledgeBase) manageKnowledgeBase = parsed.manageKnowledgeBase;
       if (parsed.documentKnowledgeBase) documentKnowledgeBase = parsed.documentKnowledgeBase;
+      if (parsed.workspaceUploadKnowledgeBase) workspaceUploadKnowledgeBase = parsed.workspaceUploadKnowledgeBase;
+      if (parsed.workspaceManageKnowledgeBase) workspaceManageKnowledgeBase = parsed.workspaceManageKnowledgeBase;
+      if (Array.isArray(parsed.workspaceKnowledgeBaseSelections)) {
+        workspaceKnowledgeBaseSelections = parsed.workspaceKnowledgeBaseSelections.map((item) => String(item));
+      }
     } catch {
       // Ignore malformed local state.
     }
@@ -697,6 +843,7 @@
     if (typeof window === 'undefined') return;
     const payload = {
       activeSection,
+      workspaceMode,
       documentMode,
       configMode,
       identity,
@@ -705,6 +852,9 @@
       searchKnowledgeBase,
       chatKnowledgeBase,
       manageKnowledgeBase,
+      workspaceUploadKnowledgeBase,
+      workspaceManageKnowledgeBase,
+      workspaceKnowledgeBaseSelections,
     };
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
   }
@@ -744,6 +894,12 @@
     void refreshActiveView();
   }
 
+  function switchWorkspaceMode(mode) {
+    workspaceMode = mode;
+    writeState();
+    void refreshActiveView();
+  }
+
   function switchDocumentMode(mode) {
     documentMode = mode;
     writeState();
@@ -778,6 +934,11 @@
     searchKnowledgeBase = value;
     chatKnowledgeBase = value;
     manageKnowledgeBase = value;
+    workspaceUploadKnowledgeBase = value;
+    workspaceManageKnowledgeBase = value;
+    if (!workspaceKnowledgeBaseSelections.length && value) {
+      workspaceKnowledgeBaseSelections = [value];
+    }
     writeState();
   }
 
@@ -1241,12 +1402,23 @@
     };
   }
 
+  function handleWorkspaceContextEdited() {
+    identity = { ...identity };
+    workspaceAutoRefreshSignature = '';
+    writeState();
+  }
+
   async function refreshKnowledgeBases({ silent = false } = {}) {
+    const requestToken = ++knowledgeBasesRefreshToken;
+    const requestContext = JSON.stringify(buildRequestContext());
     try {
       const response = await api.knowledgeBases(buildRequestContext());
+      if (requestToken !== knowledgeBasesRefreshToken) return;
+      if (requestContext !== JSON.stringify(buildRequestContext())) return;
       const nextKnowledgeBases = Array.isArray(response?.knowledge_bases) ? response.knowledge_bases : [];
       knowledgeBases = nextKnowledgeBases;
       const defaultId = knowledgeBases[0] ? String(knowledgeBases[0].id) : '';
+      const defaultPrivateId = nextKnowledgeBases.find((item) => item?.scope === 'agent_private')?.id;
       if (!knowledgeBaseById(selectedKnowledgeBase)) {
         setKnowledgeBase(defaultId);
       }
@@ -1254,7 +1426,18 @@
       if (!knowledgeBaseById(searchKnowledgeBase)) searchKnowledgeBase = defaultId;
       if (!knowledgeBaseById(chatKnowledgeBase)) chatKnowledgeBase = defaultId;
       if (!knowledgeBaseById(manageKnowledgeBase)) manageKnowledgeBase = defaultId;
+      if (!knowledgeBaseById(workspaceUploadKnowledgeBase) || knowledgeBaseById(workspaceUploadKnowledgeBase)?.scope !== 'agent_private') {
+        workspaceUploadKnowledgeBase = defaultPrivateId ? String(defaultPrivateId) : '';
+      }
+      if (!knowledgeBaseById(workspaceManageKnowledgeBase) || knowledgeBaseById(workspaceManageKnowledgeBase)?.scope !== 'agent_private') {
+        workspaceManageKnowledgeBase = defaultPrivateId ? String(defaultPrivateId) : '';
+      }
+      workspaceKnowledgeBaseSelections = workspaceKnowledgeBaseSelections.filter((value) => knowledgeBaseById(value));
+      if (!workspaceKnowledgeBaseSelections.length && defaultId) {
+        workspaceKnowledgeBaseSelections = [defaultId];
+      }
       if (!silent) pushToast('知识库已刷新', `当前可用知识库 ${knowledgeBases.length} 个`, 'success');
+      writeState();
     } catch (error) {
       if (!silent) pushToast('知识库加载失败', error.message, 'warning');
     }
@@ -1262,6 +1445,7 @@
 
   async function refreshOverview() {
     overviewBusy = true;
+    const requestContext = JSON.stringify(buildRequestContext());
     try {
       const [healthResult, readyResult, metricsResult, configResult, collectionsResult] = await Promise.allSettled([
         api.health(identity),
@@ -1279,7 +1463,9 @@
         syncConfigDraft(configResult.value);
       }
       if (collectionsResult.status === 'fulfilled') {
-        knowledgeBases = collectionsResult.value?.knowledge_bases ?? [];
+        if (requestContext === JSON.stringify(buildRequestContext())) {
+          knowledgeBases = collectionsResult.value?.knowledge_bases ?? [];
+        }
       }
       lastRefreshAt = new Date();
     } finally {
@@ -1402,6 +1588,164 @@
     }
   }
 
+  async function applyWorkspaceContext({ silent = true } = {}) {
+    await refreshKnowledgeBases({ silent });
+  }
+
+  function openWorkspaceCreateDialog() {
+    if (!identity.userId) {
+      pushToast('缺少用户上下文', '创建用户知识库前需要先填写 User ID。', 'warning');
+      return;
+    }
+    workspaceCreateName = '';
+    workspaceCreateAgentId = identity.agentId || '';
+    workspaceCreateDialogOpen = true;
+  }
+
+  function closeWorkspaceCreateDialog() {
+    workspaceCreateDialogOpen = false;
+    workspaceCreateName = '';
+    workspaceCreateAgentId = '';
+  }
+
+  function scheduleWorkspaceAutoRefresh() {
+    if (!hasMounted || activeSection !== 'workspace') return;
+    const nextSignature = `${identity.userId}|${identity.agentId}|${identity.apiKey}|${workspaceMode}`;
+    if (nextSignature === workspaceAutoRefreshSignature) return;
+    workspaceAutoRefreshSignature = nextSignature;
+    if (workspaceAutoRefreshTimer) {
+      clearTimeout(workspaceAutoRefreshTimer);
+    }
+    workspaceAutoRefreshTimer = setTimeout(() => {
+      workspaceAutoRefreshTimer = null;
+      void applyWorkspaceContext();
+    }, 300);
+  }
+
+  async function createWorkspaceKnowledgeBase() {
+    const ownerUserId = identity.userId ? Number(identity.userId) : null;
+    if (!ownerUserId) {
+      pushToast('缺少用户上下文', '创建用户知识库前需要先填写 User ID。', 'warning');
+      return;
+    }
+    const name = String(workspaceCreateName || '').trim();
+    if (!name) {
+      pushToast('请输入名称', '请先输入要创建的知识库名称。', 'warning');
+      return;
+    }
+    const ownerAgentIdInput = String(workspaceCreateAgentId || '').trim();
+    const ownerAgentId = ownerAgentIdInput ? Number(ownerAgentIdInput) : null;
+    if (ownerAgentIdInput && !Number.isFinite(ownerAgentId)) {
+      pushToast('Agent ID 无效', '绑定 Agent ID 需要是数字。', 'warning');
+      return;
+    }
+    try {
+      workspaceCreateBusy = true;
+      const created = await api.createKnowledgeBase({
+        name,
+        scope: 'agent_private',
+        owner_user_id: ownerUserId,
+        owner_agent_id: ownerAgentId,
+        api_key: identity.apiKey || null,
+      });
+      if (created?.id) {
+        upsertKnowledgeBase(created);
+      }
+      const createdId = created?.id ? String(created.id) : '';
+      if (createdId) {
+        workspaceUploadKnowledgeBase = createdId;
+        workspaceManageKnowledgeBase = createdId;
+        selectedKnowledgeBase = createdId;
+        documentKnowledgeBase = createdId;
+        searchKnowledgeBase = createdId;
+        chatKnowledgeBase = createdId;
+        manageKnowledgeBase = createdId;
+        setWorkspaceKnowledgeBases([...workspaceKnowledgeBaseSelections, createdId]);
+      }
+      workspaceCreateBusy = false;
+      closeWorkspaceCreateDialog();
+      await refreshKnowledgeBases({ silent: true });
+      pushToast('知识库已创建', `${created?.name || name} 已创建。`, 'success');
+    } catch (error) {
+      pushToast('创建失败', error.message, 'error');
+    } finally {
+      workspaceCreateBusy = false;
+    }
+  }
+
+  async function openWorkspaceKnowledgeBase(kb) {
+    const value = kb?.id ? String(kb.id) : '';
+    if (!value) return;
+    workspaceManageKnowledgeBase = value;
+    workspaceUploadKnowledgeBase = value;
+    selectedKnowledgeBase = value;
+    documentKnowledgeBase = value;
+    searchKnowledgeBase = value;
+    chatKnowledgeBase = value;
+    manageKnowledgeBase = value;
+    documentMode = 'manage';
+    activeSection = 'documents';
+    syncLocation('documents');
+    writeState();
+    await refreshDocumentsSection();
+  }
+
+  async function uploadWorkspaceFiles() {
+    if (workspaceManageKnowledgeBase) {
+      workspaceUploadKnowledgeBase = workspaceManageKnowledgeBase;
+    }
+    if (!workspaceUploadKnowledgeBase) {
+      pushToast('没有可用私有知识库', '用户工作台只允许上传到 agent 私有知识库。公共库请到“文档管理”上传。', 'warning');
+      return;
+    }
+    if (knowledgeBaseById(workspaceUploadKnowledgeBase)?.scope !== 'agent_private') {
+      pushToast('不允许上传到公共库', '用户工作台只允许上传到 agent 私有知识库。公共库请到“文档管理”上传。', 'warning');
+      return;
+    }
+    documentKnowledgeBase = workspaceUploadKnowledgeBase;
+    await uploadQueuedFiles();
+    if (workspaceManageKnowledgeBase === workspaceUploadKnowledgeBase) {
+      await refreshWorkspaceDocuments();
+    }
+  }
+
+  async function refreshWorkspaceDocuments() {
+    if (!workspaceManageKnowledgeBase) {
+      workspaceDocuments = [];
+      workspaceFiles = [];
+      workspaceDocumentsTotal = 0;
+      return;
+    }
+    workspaceManageBusy = true;
+    try {
+      const [documentsResult, filesResult] = await Promise.allSettled([
+        api.listDocuments({
+          ...knowledgeBaseRequest(workspaceManageKnowledgeBase),
+          limit: workspaceManagedPageSize,
+          offset: workspaceManagedPage * workspaceManagedPageSize,
+          filename: workspaceFileFilter || undefined,
+          ...identity,
+        }),
+        api.listFiles({
+          ...knowledgeBaseRequest(workspaceManageKnowledgeBase),
+          ...identity,
+        }),
+      ]);
+
+      if (documentsResult.status === 'fulfilled') {
+        workspaceDocuments = documentsResult.value?.documents ?? [];
+        workspaceDocumentsTotal = Number(documentsResult.value?.total ?? workspaceDocuments.length);
+      }
+      if (filesResult.status === 'fulfilled') {
+        workspaceFiles = filesResult.value?.files ?? [];
+      }
+    } catch (error) {
+      pushToast('知识库加载失败', error.message, 'warning');
+    } finally {
+      workspaceManageBusy = false;
+    }
+  }
+
   async function uploadQueuedFiles() {
     if (queuedFiles.length === 0) {
       pushToast('没有文件', '请先拖拽或选择要上传的文件。', 'warning');
@@ -1492,6 +1836,9 @@
       documentTitle = '';
       pushToast('文档已添加', '手工录入内容已保存。', 'success');
       await refreshKnowledgeBases({ silent: true });
+      if (workspaceManageKnowledgeBase === documentKnowledgeBase) {
+        await refreshWorkspaceDocuments();
+      }
       if (documentMode === 'manage') await refreshDocuments();
     } catch (error) {
       pushToast('添加失败', error.message, 'error');
@@ -1523,6 +1870,35 @@
     }
   }
 
+  async function runWorkspaceSearch() {
+    if (!searchQuery.trim()) {
+      pushToast('请输入关键词', '搜索框不能为空。', 'warning');
+      return;
+    }
+    const scopedKnowledgeBases = debugKnowledgeBases();
+    if (!scopedKnowledgeBases.length) {
+      pushToast('没有可查询范围', '请先填写 User ID，再根据需要填写 Agent ID。', 'warning');
+      return;
+    }
+    searchBusy = true;
+    try {
+      const result = await api.search({
+        query: searchQuery.trim(),
+        kbIds: scopedKnowledgeBases.map((item) => Number(item.id)),
+        limit: Number(searchLimit || 5),
+        collection: 'default',
+        ...identity,
+      });
+      searchResults = result?.results ?? [];
+      searchSummary = result?.summary ?? '';
+      pushToast('搜索完成', `已在 ${scopedKnowledgeBases.length} 个知识库范围中找到 ${searchResults.length} 条结果。`, 'success');
+    } catch (error) {
+      pushToast('搜索失败', error.message, 'error');
+    } finally {
+      searchBusy = false;
+    }
+  }
+
   async function sendChat() {
     if (!chatInput.trim()) {
       pushToast('请输入问题', '对话消息不能为空。', 'warning');
@@ -1542,6 +1918,55 @@
       const result = await api.chat({
         query: question,
         ...knowledgeBaseRequest(chatKnowledgeBase),
+        user_id: identity.userId ? Number(identity.userId) : null,
+        agent_id: identity.agentId ? Number(identity.agentId) : null,
+        api_key: identity.apiKey || null,
+      });
+      chatMessages = [
+        ...chatMessages,
+        {
+          role: 'assistant',
+          content: result?.response ?? '',
+          sources: result?.sources ?? [],
+        },
+      ];
+    } catch (error) {
+      chatMessages = [
+        ...chatMessages,
+        {
+          role: 'assistant',
+          content: `请求失败: ${error.message}`,
+          sources: [],
+        },
+      ];
+    } finally {
+      chatBusy = false;
+    }
+  }
+
+  async function sendWorkspaceChat() {
+    if (!chatInput.trim()) {
+      pushToast('请输入问题', '对话消息不能为空。', 'warning');
+      return;
+    }
+    if (!workspaceKnowledgeBaseSelections.length) {
+      pushToast('请选择知识库', '至少选择一个知识库后再发起对话。', 'warning');
+      return;
+    }
+    const question = chatInput.trim();
+    chatMessages = [
+      ...chatMessages,
+      {
+        role: 'user',
+        content: question,
+      },
+    ];
+    chatInput = '';
+    chatBusy = true;
+    try {
+      const result = await api.chat({
+        query: question,
+        kb_ids: workspaceKnowledgeBaseSelections.map((item) => Number(item)),
         user_id: identity.userId ? Number(identity.userId) : null,
         agent_id: identity.agentId ? Number(identity.agentId) : null,
         api_key: identity.apiKey || null,
@@ -1596,6 +2021,23 @@
     }
   }
 
+  async function deleteWorkspaceDocument(documentId) {
+    if (!confirm('确定要删除这个文档吗？')) return;
+    try {
+      await api.deleteDocument({
+        document_id: documentId,
+        ...knowledgeBaseRequest(workspaceManageKnowledgeBase),
+        user_id: identity.userId ? Number(identity.userId) : null,
+        agent_id: identity.agentId ? Number(identity.agentId) : null,
+        api_key: identity.apiKey || null,
+      });
+      pushToast('文档已删除', `文档 ${documentId} 已移除。`, 'success');
+      await refreshWorkspaceDocuments();
+    } catch (error) {
+      pushToast('删除失败', error.message, 'error');
+    }
+  }
+
   async function deleteFile(filename) {
     if (!confirm(`确定要删除文件 "${filename}" 及其片段吗？`)) return;
     try {
@@ -1611,6 +2053,34 @@
     } catch (error) {
       pushToast('删除失败', error.message, 'error');
     }
+  }
+
+  async function deleteWorkspaceFile(filename) {
+    if (!confirm(`确定要删除文件 "${filename}" 及其片段吗？`)) return;
+    try {
+      await api.deleteFile({
+        filename,
+        ...knowledgeBaseRequest(workspaceManageKnowledgeBase),
+        user_id: identity.userId ? Number(identity.userId) : null,
+        agent_id: identity.agentId ? Number(identity.agentId) : null,
+        api_key: identity.apiKey || null,
+      });
+      pushToast('文件已删除', `${filename} 已移除。`, 'success');
+      await refreshWorkspaceDocuments();
+    } catch (error) {
+      pushToast('删除失败', error.message, 'error');
+    }
+  }
+
+  async function nextWorkspacePage() {
+    workspaceManagedPage += 1;
+    await refreshWorkspaceDocuments();
+  }
+
+  async function prevWorkspacePage() {
+    if (workspaceManagedPage === 0) return;
+    workspaceManagedPage -= 1;
+    await refreshWorkspaceDocuments();
   }
 
   function selectFileFilter(filename) {
@@ -1743,6 +2213,11 @@
   }
 
   function refreshActiveView() {
+    if (activeSection === 'workspace') {
+      return (async () => {
+        await refreshKnowledgeBases({ silent: true });
+      })();
+    }
     if (activeSection === 'overview') return refreshOverview();
     if (activeSection === 'documents') return refreshDocumentsSection();
     if (activeSection === 'mcp') return refreshMcpTools({ silent: true });
@@ -1778,6 +2253,7 @@
   onMount(() => {
     readState();
     syncLocation(activeSection, { replace: true });
+    hasMounted = true;
     const handlePopState = () => {
       const routedSection = sectionFromLocation();
       if (routedSection) {
@@ -1790,14 +2266,56 @@
     void (async () => {
       try {
         await refreshAll();
+        if (activeSection === 'workspace') {
+          workspaceAutoRefreshSignature = '';
+          await applyWorkspaceContext({ silent: true });
+        }
       } finally {
         loading = false;
       }
     })();
     return () => {
+      if (workspaceAutoRefreshTimer) {
+        clearTimeout(workspaceAutoRefreshTimer);
+      }
       window.removeEventListener('popstate', handlePopState);
     };
   });
+
+  $: {
+    hasMounted;
+    activeSection;
+    workspaceMode;
+    identity.userId;
+    identity.agentId;
+    identity.apiKey;
+    scheduleWorkspaceAutoRefresh();
+  }
+
+  $: {
+    knowledgeBases;
+    workspaceOwnedKnowledgeBases = [...knowledgeBases]
+      .filter((item) => item?.scope === 'agent_private')
+      .sort((left, right) => {
+        if ((left.owner_agent_id ?? null) === null && (right.owner_agent_id ?? null) !== null) return -1;
+        if ((left.owner_agent_id ?? null) !== null && (right.owner_agent_id ?? null) === null) return 1;
+        return String(left.name || '').localeCompare(String(right.name || ''), 'zh-CN');
+      });
+  }
+
+  $: {
+    knowledgeBases;
+    identity.userId;
+    identity.agentId;
+    const userId = identity.userId ? Number(identity.userId) : null;
+    const agentId = identity.agentId ? Number(identity.agentId) : null;
+    workspaceDebugKnowledgeBases = knowledgeBases.filter((item) => {
+      if (item?.scope === 'public') return true;
+      if (!userId || Number(item?.owner_user_id) !== userId) return false;
+      if (item?.owner_agent_id === null || item?.owner_agent_id === undefined) return true;
+      return agentId !== null && Number(item.owner_agent_id) === agentId;
+    });
+  }
 </script>
 
 <svelte:head>
@@ -1840,7 +2358,37 @@
       <div class="sidebar-label">导航</div>
       <div class="nav-list">
         {#each sections as section}
-          {#if section.id === 'documents'}
+          {#if section.id === 'workspace'}
+            <div class="nav-group {activeSection === 'workspace' ? 'active' : ''}">
+              <button
+                class="nav-item {activeSection === 'workspace' ? 'active' : ''}"
+                on:click={() => switchSection('workspace')}
+              >
+                <span class="nav-title">
+                  <strong>{section.title}</strong>
+                  <span>{section.subtitle}</span>
+                </span>
+              </button>
+              {#if activeSection === 'workspace'}
+                <div class="nav-sublist">
+                  {#each workspaceModes as mode}
+                    <button
+                      class="nav-subitem {activeSection === 'workspace' && workspaceMode === mode.id ? 'active' : ''}"
+                      on:click={() => {
+                        activeSection = 'workspace';
+                        switchWorkspaceMode(mode.id);
+                        syncLocation('workspace');
+                        writeState();
+                        void refreshActiveView();
+                      }}
+                    >
+                      {mode.title}
+                    </button>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+          {:else if section.id === 'documents'}
             <div class="nav-group {activeSection === 'documents' ? 'active' : ''}">
               <button
                 class="nav-item {activeSection === 'documents' ? 'active' : ''}"
@@ -1915,34 +2463,147 @@
       </div>
     </div>
 
-    <div class="sidebar-section">
-      <div class="sidebar-label">请求上下文</div>
-      <div class="field">
-        <div class="field-label">Knowledge Base</div>
-        <SelectField
-          bind:value={selectedKnowledgeBase}
-          options={knowledgeBaseOptions()}
-          ariaLabel="选择知识库"
-          on:change={() => setKnowledgeBase(selectedKnowledgeBase)}
-        />
-      </div>
-      <div class="field">
-        <div class="field-label">User ID</div>
-        <input bind:value={identity.userId} placeholder="1001" />
-      </div>
-      <div class="field">
-        <div class="field-label">Agent ID</div>
-        <input bind:value={identity.agentId} placeholder="50" />
-      </div>
-      <div class="field">
-        <div class="field-label">API Key</div>
-        <input bind:value={identity.apiKey} placeholder="可选" />
-      </div>
-      <div class="field-help">这些值会附带到请求里，用来列出并访问公共库或当前用户的 agent 私有知识库。</div>
-    </div>
   </aside>
 
   <main class="content {activeSection === 'config' && configMode === 'provider' ? 'content--provider' : ''}">
+    {#if activeSection === 'workspace'}
+      <PageShell title="用户工作台" subtitle="面向具体用户的知识库管理与检索调试。">
+        <svelte:fragment slot="meta">
+          <div class="workspace-context-bar">
+            <div class="workspace-context-field">
+              <span>User ID</span>
+              <input bind:value={identity.userId} placeholder="1001" on:input={handleWorkspaceContextEdited} />
+            </div>
+            <div class="workspace-context-field">
+              <span>Agent ID</span>
+              <input bind:value={identity.agentId} placeholder="50" on:input={handleWorkspaceContextEdited} />
+            </div>
+            <div class="workspace-context-field workspace-context-field--wide">
+              <span>API Key</span>
+              <input bind:value={identity.apiKey} placeholder="可选，用于鉴权" on:input={handleWorkspaceContextEdited} />
+            </div>
+          </div>
+        </svelte:fragment>
+
+        {#if workspaceMode === 'library'}
+          <div class="workspace-library-grid">
+            {#each workspaceOwnedKnowledgeBases as kb}
+              <button
+                class="workspace-library-card {workspaceManageKnowledgeBase === String(kb.id) ? 'active' : ''}"
+                on:click={() => openWorkspaceKnowledgeBase(kb)}
+                title={`${kb.name} · ${knowledgeBaseScopeBadge(kb)}`}
+              >
+                <div class="workspace-library-card__meta">
+                  <span class="status-badge info">#{kb.id}</span>
+                  <span class="workspace-library-card__agent">
+                    {kb.owner_agent_id === null || kb.owner_agent_id === undefined ? '未绑定 Agent' : `绑定 Agent ${kb.owner_agent_id}`}
+                  </span>
+                </div>
+                <div class="workspace-library-card__title">{kb.name}</div>
+                <div class="workspace-library-card__desc">{knowledgeBaseScopeBadge(kb)}</div>
+              </button>
+            {/each}
+
+            <button class="workspace-library-card workspace-library-card--create" on:click={openWorkspaceCreateDialog}>
+              <span class="workspace-library-card__plus">+</span>
+              <div class="workspace-library-card__title">新建知识库</div>
+              <div class="workspace-library-card__desc">创建一本新的“书”，加入当前用户的知识库集合。</div>
+            </button>
+          </div>
+        {:else}
+          <div class="field-help">若当前用户还没有默认私有知识库，加载时后端会自动准备一个默认库。未绑定 Agent 的用户知识库，会被所有 Agent 查询到；绑定了 Agent 的知识库，只会在对应 Agent 的调试范围中出现。已发现代理：{agentOptions().map((item) => item.label).join('、') || '暂无'}</div>
+
+          <div class="grid-2">
+            <PanelCard title="当前范围" subtitle="调试当前 Agent 的实际检索范围。">
+              <div class="workspace-kb-summary">当前调试命中的查询范围</div>
+              <div class="workspace-kb-list">
+                {#each workspaceDebugKnowledgeBases as kb}
+                  <div class="workspace-kb-item">
+                    <div>
+                      <strong>{kb.name}</strong>
+                      <div class="muted small">{knowledgeBaseScopeBadge(kb)}</div>
+                    </div>
+                    <span class="status-badge {kb.scope === 'public' ? 'good' : 'info'}">#{kb.id}</span>
+                  </div>
+                {:else}
+                  <div class="empty-state">当前没有可命中的知识库范围。</div>
+                {/each}
+              </div>
+            </PanelCard>
+          </div>
+        {/if}
+
+        {#if workspaceMode === 'debug'}
+          <div class="grid-2">
+            <PanelCard title="检索调试" subtitle="只看当前用户 + 当前 Agent 实际会命中的知识库范围。">
+              <div class="field">
+                <div class="field-label">搜索关键词</div>
+                <input bind:value={searchQuery} placeholder="输入关键词..." on:keydown={(event) => event.key === 'Enter' && runWorkspaceSearch()} />
+              </div>
+              <div class="field-row mt-14">
+                <div class="field">
+                  <div class="field-label">返回数量</div>
+                  <input type="number" min="1" max="20" bind:value={searchLimit} />
+                </div>
+                <div class="field">
+                  <div class="field-label">&nbsp;</div>
+                  <button class="button primary" on:click={runWorkspaceSearch} disabled={searchBusy}>
+                    {searchBusy ? '搜索中...' : '执行检索调试'}
+                  </button>
+                </div>
+              </div>
+              <div class="field-help mt-16">查询范围 = 系统公开知识库 + 当前用户未绑定 Agent 的知识库 + 当前用户绑定到当前 Agent 的知识库。</div>
+            </PanelCard>
+
+            <PanelCard title="查询范围" subtitle={`${workspaceDebugKnowledgeBases.length} 个知识库会参与本次调试检索。`}>
+              <div class="workspace-kb-list">
+                {#each workspaceDebugKnowledgeBases as kb}
+                  <div class="workspace-kb-item">
+                    <div>
+                      <strong>{kb.name}</strong>
+                      <div class="muted small">{knowledgeBaseScopeBadge(kb)}</div>
+                    </div>
+                    <span class="status-badge {kb.scope === 'public' ? 'good' : 'info'}">#{kb.id}</span>
+                  </div>
+                {:else}
+                  <div class="empty-state">当前没有可检索的知识库范围。</div>
+                {/each}
+              </div>
+            </PanelCard>
+          </div>
+
+          <PanelCard title="检索结果" subtitle={`${searchResults.length} 条命中`}>
+            <div class="result-list">
+              {#if searchSummary}
+                <div class="result-card">
+                  <span class="result-score">摘要</span>
+                  <div class="result-content">{searchSummary}</div>
+                </div>
+              {/if}
+              {#if searchResults.length}
+                {#each searchResults as result}
+                  <div class="result-card">
+                    <div class="toolbar">
+                      <div>
+                        <strong>{safeText(result.metadata?.knowledge_base_name, result.filename || result.source || '结果')}</strong>
+                        <div class="meta">{knowledgeBaseScopeBadge({ scope: result.metadata?.knowledge_base_scope, owner_agent_id: result.metadata?.owner_agent_id, owner_user_id: result.metadata?.owner_user_id })} · {safeText(result.filename || result.source, 'unknown')}</div>
+                      </div>
+                      <div class="result-score-stack">
+                        <span class="result-score">融合分 {formatScore(result.score)}</span>
+                      </div>
+                    </div>
+                    <div class="result-content">{clampText(result.content, 360)}</div>
+                  </div>
+                {/each}
+              {:else}
+                <div class="empty-state">还没有搜索结果。</div>
+              {/if}
+            </div>
+          </PanelCard>
+        {/if}
+      </PageShell>
+    {/if}
+
     {#if activeSection === 'overview'}
       <PageShell title="总览" subtitle="状态、请求、集合、版本。">
         <svelte:fragment slot="actions">
@@ -2854,6 +3515,48 @@
         {/if}
       </div>
       <pre class="document-preview">{previewDocument.content || '该片段没有内容。'}</pre>
+    </div>
+  </div>
+{/if}
+
+{#if workspaceCreateDialogOpen}
+  <div class="modal-backdrop" role="presentation" on:click={closeWorkspaceCreateDialog}>
+    <div
+      class="modal-card modal-card--form"
+      role="dialog"
+      aria-modal="true"
+      aria-label="新建知识库"
+      tabindex="-1"
+      on:click|stopPropagation
+      on:keydown={(event) => event.key === 'Escape' && closeWorkspaceCreateDialog()}
+    >
+      <div class="modal-card__header">
+        <div>
+          <h3>新建知识库</h3>
+          <p>创建后会立即出现在当前用户的知识库列表中。</p>
+        </div>
+        <button class="button ghost" type="button" on:click={closeWorkspaceCreateDialog} disabled={workspaceCreateBusy}>关闭</button>
+      </div>
+
+      <div class="field-row">
+        <div class="field">
+          <div class="field-label">知识库名称</div>
+          <input bind:value={workspaceCreateName} placeholder="例如：客服知识库" on:keydown={(event) => event.key === 'Enter' && createWorkspaceKnowledgeBase()} />
+        </div>
+        <div class="field">
+          <div class="field-label">绑定 Agent ID</div>
+          <input bind:value={workspaceCreateAgentId} placeholder="留空表示未绑定" on:keydown={(event) => event.key === 'Enter' && createWorkspaceKnowledgeBase()} />
+        </div>
+      </div>
+
+      <div class="field-help">未绑定 Agent 的知识库会对当前用户的所有 Agent 可见；绑定后只在对应 Agent 的调试范围中出现。</div>
+
+      <div class="card-actions">
+        <button class="button ghost" type="button" on:click={closeWorkspaceCreateDialog} disabled={workspaceCreateBusy}>取消</button>
+        <button class="button primary" type="button" on:click={createWorkspaceKnowledgeBase} disabled={workspaceCreateBusy}>
+          {workspaceCreateBusy ? '创建中...' : '创建知识库'}
+        </button>
+      </div>
     </div>
   </div>
 {/if}

@@ -35,7 +35,14 @@ class HttpServerFacadeTests(unittest.TestCase):
         self.client = TestClient(app)
 
     def _fake_service(self):
+        fake_llm = type("FakeLlm", (), {})()
+        fake_llm.generate = AsyncMock(return_value="mock multi answer")
+        fake_llm.summarize = AsyncMock(return_value="mock multi summary")
+        fake_runtime = type("FakeRuntime", (), {})()
+        fake_runtime.settings = type("FakeSettings", (), {"enable_llm_summary": True})()
+        fake_runtime.ensure_llm_model = AsyncMock(return_value=fake_llm)
         service = type("FakeService", (), {})()
+        service.runtime = fake_runtime
         service.add_document = AsyncMock(return_value={"message": "Document added successfully", "document_id": "doc-1", "chunk_count": 1})
         service.upload_files = AsyncMock(return_value={"total_files": 1, "successful": 1, "failed": 0, "results": []})
         service.list_collections = AsyncMock(return_value=["default", "u7_docs"])
@@ -179,6 +186,29 @@ class HttpServerFacadeTests(unittest.TestCase):
             self.assertTrue(service.list_files.await_count)
             self.assertTrue(service.delete_document.await_count)
             self.assertTrue(service.delete_file.await_count)
+        finally:
+            app.state.shell_context.service_provider = original_provider
+
+    def test_multi_kb_search_and_chat_use_aggregated_results(self):
+        service = self._fake_service()
+        original_provider = app.state.shell_context.service_provider
+        app.state.shell_context.service_provider = AsyncMock(return_value=service)
+        try:
+            search = self.client.get("/search", params={"query": "fastapi", "kb_ids": "1,2", "user_id": 7, "agent_id": 2})
+            self.assertEqual(search.status_code, 200)
+            self.assertEqual(len(search.json()["results"]), 2)
+            self.assertEqual(search.json()["summary"], "mock multi summary")
+            self.assertEqual(service.search.await_count, 2)
+
+            chat = self.client.post(
+                "/chat",
+                json={"query": "What is FastAPI?", "kb_ids": [1, 2], "user_id": 7, "agent_id": 2},
+            )
+            self.assertEqual(chat.status_code, 200)
+            self.assertEqual(chat.json()["response"], "mock multi answer")
+            self.assertEqual(len(chat.json()["sources"]), 2)
+            self.assertEqual(service.search.await_count, 4)
+            self.assertFalse(service.chat.await_count)
         finally:
             app.state.shell_context.service_provider = original_provider
 
