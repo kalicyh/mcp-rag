@@ -2,6 +2,17 @@
 
 > ✨100% 由 AI 编写
 
+<table>
+  <tr>
+    <td><img src="https://github.com/user-attachments/assets/3103638f-38cc-47fe-8314-97a08c7c73e9" width="100%"></td>
+    <td><img src="https://github.com/user-attachments/assets/5f36a470-fd9d-42cd-bdd0-24f3bb0efa1e" width="100%"></td>
+  </tr>
+  <tr>
+    <td><img src="https://github.com/user-attachments/assets/e8cccdaa-e6c3-4c5c-a4f9-31bf11f98b6e" width="100%"></td>
+    <td><img src="https://github.com/user-attachments/assets/d387d5f6-9ca2-455a-a63c-091736850da6" width="100%"></td>
+  </tr>
+</table>
+
 面向 AI 客户端的服务优先 RAG 服务，当前以 FastAPI HTTP 服务和 Streamable HTTP MCP 端点为主。
 
 代码当前提供的是一个统一后端壳层：
