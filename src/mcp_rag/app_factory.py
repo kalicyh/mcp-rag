@@ -208,12 +208,24 @@ def create_http_app(
 ) -> FastAPI:
     """Create the default HTTP shell app."""
 
+    openapi_tags = [
+        {"name": "系统", "description": "服务入口、健康检查与运行指标。"},
+        {"name": "应用", "description": "前端单页应用与历史兼容页面入口。"},
+        {"name": "配置", "description": "系统配置读取、更新、重载与重置。"},
+        {"name": "服务商", "description": "模型服务商与模型列表同步相关接口。"},
+        {"name": "知识库", "description": "知识库集合查询、创建与权限范围解析。"},
+        {"name": "文档", "description": "文档与文件的导入、上传、查询、删除。"},
+        {"name": "对话与检索", "description": "检索、对话与多知识库查询能力。"},
+        {"name": "MCP 调试", "description": "MCP 工具列表与调试调用。"},
+    ]
+
     app = FastAPI(
-        title="MCP-RAG HTTP API",
-        description="API for configuring MCP-RAG and adding documents",
+        title="MCP-RAG 接口文档",
+        description="MCP-RAG 的统一后端接口，涵盖配置管理、知识库、文档导入、检索、对话与 MCP 调试。",
         lifespan=lifespan,
         docs_url=None,
         redoc_url=None,
+        openapi_tags=openapi_tags,
     )
     app.state.shell_context = context or get_default_app_context()
 
@@ -221,7 +233,7 @@ def create_http_app(
     async def scalar_docs() -> HTMLResponse:
         return get_scalar_api_reference(
             openapi_url=app.openapi_url or "/openapi.json",
-            title="MCP-RAG API Docs",
+            title="MCP-RAG 接口文档",
             layout=Layout.MODERN,
             theme=Theme.DEFAULT,
             show_sidebar=True,

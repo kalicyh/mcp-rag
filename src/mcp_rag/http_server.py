@@ -481,32 +481,32 @@ def _format_llm_fallback_response(context: str, error: Exception) -> str:
     )
 
 
-@app.get("/")
+@app.get("/", tags=["系统"], summary="根入口")
 async def root():
     """Root endpoint - redirect to the SPA shell."""
     return RedirectResponse(url="/app")
 
 
-@app.get("/doc")
+@app.get("/doc", tags=["系统"], summary="文档入口重定向")
 async def doc_redirect():
     """Redirect to API documentation."""
     return RedirectResponse(url="/docs")
 
 
-@app.get("/health")
+@app.get("/health", tags=["系统"], summary="健康检查")
 async def health(request: Request):
     """Lightweight health summary without warming the runtime."""
     return health_payload(request.app.state.shell_context)
 
 
-@app.get("/ready")
+@app.get("/ready", tags=["系统"], summary="就绪检查")
 async def ready(request: Request):
     """Readiness signal for shell wiring."""
     payload = ready_payload(request.app.state.shell_context)
     return JSONResponse(status_code=200 if payload["ready"] else 503, content=payload)
 
 
-@app.get("/metrics")
+@app.get("/metrics", tags=["系统"], summary="运行指标")
 async def metrics(request: Request):
     """Observability snapshot."""
     return metrics_payload(request.app.state.shell_context)
@@ -532,8 +532,8 @@ def _serve_spa_entry(*, request_path: str):
     return FileResponse(entry, media_type="text/html")
 
 
-@app.get("/app", response_class=HTMLResponse)
-@app.get("/app/{spa_path:path}", response_class=HTMLResponse)
+@app.get("/app", response_class=HTMLResponse, tags=["应用"], summary="前端应用入口")
+@app.get("/app/{spa_path:path}", response_class=HTMLResponse, tags=["应用"], summary="前端应用子路径")
 async def spa_entry(spa_path: str = ""):
     """Serve the SPA shell for browser clients."""
 
@@ -541,21 +541,21 @@ async def spa_entry(spa_path: str = ""):
     return _serve_spa_entry(request_path=request_path)
 
 
-@app.get("/documents-page")
+@app.get("/documents-page", tags=["应用"], summary="文档页兼容入口")
 async def documents_page():
     """Backward-compatible redirect to the SPA documents view."""
 
     return RedirectResponse(url=_spa_redirect_target("documents"))
 
 
-@app.get("/config-page")
+@app.get("/config-page", tags=["应用"], summary="配置页兼容入口")
 async def config_page():
     """Backward-compatible redirect to the SPA config view."""
 
     return RedirectResponse(url=_spa_redirect_target("config"))
 
 
-@app.get("/config")
+@app.get("/config", tags=["配置"], summary="读取配置")
 async def get_config(request: Request, api_key: Optional[str] = None):
     """Get current configuration."""
     context = request.app.state.shell_context
@@ -565,7 +565,7 @@ async def get_config(request: Request, api_key: Optional[str] = None):
         return config_manager.get_all_settings()
 
 
-@app.post("/config")
+@app.post("/config", tags=["配置"], summary="更新单个配置项")
 async def update_config(config: ConfigUpdate, request: Request):
     """Update a single configuration setting."""
     context = request.app.state.shell_context
@@ -581,7 +581,7 @@ async def update_config(config: ConfigUpdate, request: Request):
         return {"message": f"Config {config.key} updated successfully", "reloaded": True}
 
 
-@app.post("/config/bulk")
+@app.post("/config/bulk", tags=["配置"], summary="批量更新配置")
 async def update_config_bulk(config: BulkConfigUpdate, request: Request):
     """Update multiple configuration settings."""
     context = request.app.state.shell_context
@@ -597,7 +597,7 @@ async def update_config_bulk(config: BulkConfigUpdate, request: Request):
         return {"message": "Config updated successfully", "reloaded": True}
 
 
-@app.post("/config/reset")
+@app.post("/config/reset", tags=["配置"], summary="重置默认配置")
 async def reset_config(request: Request):
     """Reset configuration to defaults."""
     context = request.app.state.shell_context
@@ -612,7 +612,7 @@ async def reset_config(request: Request):
         return {"message": "Config reset to defaults successfully", "reloaded": True}
 
 
-@app.post("/config/reload")
+@app.post("/config/reload", tags=["配置"], summary="从磁盘重载配置")
 async def reload_config(request: Request):
     """Reload configuration from disk and rebuild the live runtime."""
     context = request.app.state.shell_context
@@ -625,7 +625,7 @@ async def reload_config(request: Request):
         return {"message": "Config reloaded successfully", "reloaded": True}
 
 
-@app.get("/providers/{provider}/models")
+@app.get("/providers/{provider}/models", tags=["服务商"], summary="获取服务商模型列表")
 async def get_provider_models(
     provider: str,
     request: Request,
@@ -682,7 +682,7 @@ async def get_provider_models(
         }
 
 
-@app.post("/add-document")
+@app.post("/add-document", tags=["文档"], summary="新增单条文档")
 async def add_document(doc: DocumentAdd, request: Request):
     """Add a single document."""
     try:
@@ -717,7 +717,7 @@ async def add_document(doc: DocumentAdd, request: Request):
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
 
-@app.post("/upload-files")
+@app.post("/upload-files", tags=["文档"], summary="上传文件")
 async def upload_files(
     request: Request,
     files: List[UploadFile] = File(...),
@@ -753,7 +753,7 @@ async def upload_files(
         )
 
 
-@app.get("/collections")
+@app.get("/collections", tags=["知识库"], summary="列出历史集合")
 async def list_collections(
     request: Request,
     user_id: Optional[int] = None,
@@ -782,7 +782,7 @@ async def list_collections(
     return {"collections": collections}
 
 
-@app.get("/knowledge-bases")
+@app.get("/knowledge-bases", tags=["知识库"], summary="列出知识库")
 async def list_knowledge_bases(
     request: Request,
     user_id: Optional[int] = None,
@@ -809,7 +809,7 @@ async def list_knowledge_bases(
     return {"knowledge_bases": [item.to_dict() for item in items]}
 
 
-@app.post("/knowledge-bases")
+@app.post("/knowledge-bases", tags=["知识库"], summary="创建知识库")
 async def create_knowledge_base(payload: KnowledgeBaseCreate, request: Request):
     """Create a public or agent-private knowledge base."""
 
@@ -840,7 +840,7 @@ async def create_knowledge_base(payload: KnowledgeBaseCreate, request: Request):
     return knowledge_base.to_dict()
 
 
-@app.get("/debug/mcp/tools")
+@app.get("/debug/mcp/tools", tags=["MCP 调试"], summary="列出 MCP 工具")
 async def debug_mcp_tools(request: Request, api_key: Optional[str] = None):
     """List MCP tools for the debug UI."""
 
@@ -859,7 +859,7 @@ async def debug_mcp_tools(request: Request, api_key: Optional[str] = None):
         return {"tools": mcp_server.debug_tools()}
 
 
-@app.post("/debug/mcp/call")
+@app.post("/debug/mcp/call", tags=["MCP 调试"], summary="调试调用 MCP 工具")
 async def debug_mcp_call(payload: MCPDebugCall, request: Request):
     """Call one MCP tool through an HTTP debug facade."""
 
@@ -879,7 +879,7 @@ async def debug_mcp_call(payload: MCPDebugCall, request: Request):
     return result
 
 
-@app.post("/chat")
+@app.post("/chat", tags=["对话与检索"], summary="对话问答")
 async def chat_with_knowledge_base(chat_request: dict, request: Request):
     """Chat with knowledge base using LLM."""
     query = chat_request.get("query", "")
@@ -951,7 +951,7 @@ async def chat_with_knowledge_base(chat_request: dict, request: Request):
             )
     return response.to_dict()
 
-@app.get("/search")
+@app.get("/search", tags=["对话与检索"], summary="检索知识库")
 async def search_documents(
     request: Request,
     query: str,
@@ -1009,7 +1009,7 @@ async def search_documents(
             )
     return response.to_dict()
 
-@app.get("/list-documents")
+@app.get("/list-documents", tags=["文档"], summary="列出文档记录")
 async def list_documents(
     request: Request,
     collection: str = "default",
@@ -1047,7 +1047,7 @@ async def list_documents(
     return result
 
 
-@app.delete("/delete-document")
+@app.delete("/delete-document", tags=["文档"], summary="删除文档记录")
 async def delete_document(document_request: DeleteDocumentRequest, request: Request):
     """Delete a document."""
     try:
@@ -1081,7 +1081,7 @@ async def delete_document(document_request: DeleteDocumentRequest, request: Requ
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/list-files")
+@app.get("/list-files", tags=["文档"], summary="列出文件")
 async def list_files(
     request: Request,
     collection: str = "default",
@@ -1119,7 +1119,7 @@ async def list_files(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.delete("/delete-file")
+@app.delete("/delete-file", tags=["文档"], summary="删除文件")
 async def delete_file(file_request: DeleteFileRequest, request: Request):
     """Delete a file."""
     try:
